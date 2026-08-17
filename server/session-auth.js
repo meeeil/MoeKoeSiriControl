@@ -1,5 +1,6 @@
 /**
- * Session recovery (Phase 5.6): password login to the MoeKoeMusic API.
+ * Session recovery: password login to the MoeKoeMusic API, guarded by a
+ * circuit breaker.
  *
  * When the iPad's KuGou token is dead (login_by_token returns 152 or there is
  * no token at all), the Windows server logs in on behalf of the iPad using the
@@ -11,9 +12,19 @@
  * `/login?username=..&password=..` query-string form so credentials never
  * travel in a URL.
  *
+ * Circuit breaker (Phase 6):
+ *   state        meaning
+ *   ready        normal operation
+ *   cooldown     transient failure (UPSTREAM_UNAVAILABLE / TIMEOUT); retries
+ *                are suppressed until cooldownUntil
+ *   hard_stopped AUTH_REJECTED / RISK_REQUIRED; retries are suppressed until
+ *                reset() (an admin action) — retrying bad credentials or a
+ *                risk-locked account just burns budget and can harden the lock
+ *
  * Guards:
  *  - single-flight: concurrent `login()` calls share one upstream login
- *  - cooldown: any failure suppresses further attempts for cooldownMs
+ *  - hourly budget: at most `budget` real upstream logins per rolling hour
+ *  - success clears the budget and returns the state to ready
  *  - timeout: each login request is aborted after timeoutMs
  *
  * Error codes (subset of the WS reauth protocol):
@@ -23,6 +34,7 @@
  *   AUTH_REJECTED        wrong credentials or the account refused this login
  *   UPSTREAM_UNAVAILABLE the MoeKoeMusic API was unreachable / non-JSON
  *   TIMEOUT              the login request exceeded timeoutMs
+ *   BUDGET_EXCEEDED      the hourly upstream-login budget is exhausted
  */
 import config from './config.js';
 
@@ -32,8 +44,11 @@ export const SESSION_AUTH_ERRORS = Object.freeze([
   'RISK_REQUIRED',
   'AUTH_REJECTED',
   'UPSTREAM_UNAVAILABLE',
-  'TIMEOUT'
+  'TIMEOUT',
+  'BUDGET_EXCEEDED'
 ]);
+
+const HARD_STOP_CODES = new Set(['AUTH_REJECTED', 'RISK_REQUIRED']);
 
 function nonEmpty(value) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -45,7 +60,9 @@ function nonEmpty(value) {
  * @param {string} [opts.password]      KuGou password
  * @param {string} [opts.apiBase]       MoeKoeMusic API base (default config)
  * @param {number} [opts.timeoutMs]      login timeout (default 15000)
- * @param {number} [opts.cooldownMs]     failure cooldown (default 60000)
+ * @param {number} [opts.cooldownMs]     transient-failure cooldown (default 60000)
+ * @param {number} [opts.budget]         upstream logins allowed per rolling hour (default 5)
+ * @param {number} [opts.budgetWindowMs] budget window length (default 3600000)
  * @param {() => number} [opts.getNow]
  * @param {typeof fetch} [opts.fetchImpl]
  * @param {(...args: unknown[]) => void} [opts.log]
@@ -56,16 +73,27 @@ export function createSessionAuth({
   apiBase = config.MOEKOE_API_URL,
   timeoutMs = 15000,
   cooldownMs = 60000,
+  budget = 5,
+  budgetWindowMs = 3600000,
   getNow = () => Date.now(),
   fetchImpl = fetch,
   log = () => {}
 } = {}) {
   let inFlight = null;
+  let state = 'ready';
   let cooldownUntil = 0;
   let lastFailure = null;
+  const attempts = []; // timestamps of real upstream logins
 
   function isConfigured() {
     return nonEmpty(username) && nonEmpty(password);
+  }
+
+  function pruneAttempts(now) {
+    const cutoff = now - budgetWindowMs;
+    for (let i = attempts.length - 1; i >= 0; i -= 1) {
+      if (attempts[i] < cutoff) attempts.splice(i, 1);
+    }
   }
 
   // Returns null for success, otherwise one of the SESSION_AUTH_ERRORS.
@@ -85,9 +113,23 @@ export function createSessionAuth({
 
   function fail(code, detail) {
     const failure = { ok: false, code, detail };
-    cooldownUntil = getNow() + cooldownMs;
     lastFailure = failure;
+    if (HARD_STOP_CODES.has(code)) {
+      state = 'hard_stopped';
+      cooldownUntil = getNow() + cooldownMs;
+    } else {
+      state = 'cooldown';
+      cooldownUntil = getNow() + cooldownMs;
+    }
     return failure;
+  }
+
+  function clearState(now) {
+    state = 'ready';
+    cooldownUntil = 0;
+    lastFailure = null;
+    attempts.length = 0;
+    log('session-auth: circuit reset after success');
   }
 
   async function doLogin(device = {}) {
@@ -149,6 +191,7 @@ export function createSessionAuth({
         vip_type: d.vip_type != null ? Number(d.vip_type) : 0,
         vip_token: nonEmpty(d.vip_token) ? String(d.vip_token) : ''
       };
+      clearState(getNow());
       log('session-auth: login ok in', getNow() - startedAt, 'ms');
       return { ok: true, session };
     }
@@ -163,9 +206,19 @@ export function createSessionAuth({
       return Promise.resolve({ ok: false, code: 'NOT_CONFIGURED', detail: 'missing-credentials' });
     }
     if (inFlight) return inFlight;
-    if (getNow() < cooldownUntil) {
-      return Promise.resolve(lastFailure || { ok: false, code: 'AUTH_REJECTED' });
+    const now = getNow();
+    if (state === 'hard_stopped') {
+      return Promise.resolve(lastFailure || { ok: false, code: 'AUTH_REJECTED', detail: 'hard-stopped' });
     }
+    if (state === 'cooldown' && now < cooldownUntil) {
+      return Promise.resolve(lastFailure || { ok: false, code: 'UPSTREAM_UNAVAILABLE', detail: 'cooldown' });
+    }
+    pruneAttempts(now);
+    if (attempts.length >= budget) {
+      log('session-auth: hourly budget exhausted (', attempts.length, '/', budget, ')');
+      return Promise.resolve({ ok: false, code: 'BUDGET_EXCEEDED', detail: 'budget-exhausted' });
+    }
+    attempts.push(now);
     inFlight = doLogin(device).finally(() => {
       inFlight = null;
     });
@@ -173,9 +226,23 @@ export function createSessionAuth({
   }
 
   function reset() {
+    state = 'ready';
     cooldownUntil = 0;
     lastFailure = null;
+    attempts.length = 0;
   }
 
-  return { login, reset, isConfigured };
+  function status() {
+    const now = getNow();
+    pruneAttempts(now);
+    return {
+      configured: isConfigured(),
+      state,
+      lastError: lastFailure ? lastFailure.code : null,
+      cooldownUntil,
+      attemptsRemaining: Math.max(0, budget - attempts.length)
+    };
+  }
+
+  return { login, reset, isConfigured, status };
 }

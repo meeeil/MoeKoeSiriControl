@@ -8,6 +8,7 @@ import { createPendingCoordinator } from '../server/pending.js';
 import { createOfflineCommand } from '../server/offline-command.js';
 import { createHttpApi } from '../server/http-api.js';
 import { createControllerStore } from '../server/controller-store.js';
+import { createSessionAuth } from '../server/session-auth.js';
 import { makePairCookieValue, PAIR_COOKIE } from '../server/pairing.js';
 import config from '../server/config.js';
 
@@ -30,6 +31,11 @@ controllerStore.set(CONTROLLER_DEVICE_ID);
 
 const pending = createPendingCoordinator({ ttlMs: 60000, waitMs: 300 });
 const offlineCommand = createOfflineCommand({ log: () => {} });
+const sessionAuth = createSessionAuth({
+  username: 'u',
+  password: 'p',
+  fetchImpl: async () => ({ status: 200, text: async () => '{"status":1,"data":{"token":"t"}}' })
+});
 
 const server = createControlServer({
   authTimeoutMs: 500,
@@ -63,7 +69,8 @@ server.app.use(
     controllerConnectionCount: () => server.controllerConnectionCount(),
     controllerStore,
     pending,
-    offlineCommand
+    offlineCommand,
+    sessionAuth
   })
 );
 
@@ -394,4 +401,7 @@ test('debug/status requires token and reports clients + pending + offline + cont
   assert.equal(typeof body.pending.count, 'number');
   assert.equal(typeof body.offline.state, 'string');
   assert.equal(typeof body.offline.terminalCount, 'number');
+  assert.equal(body.sessionAuth.configured, true);
+  assert.equal(body.sessionAuth.state, 'ready');
+  assert.equal(typeof body.sessionAuth.attemptsRemaining, 'number');
 });

@@ -27,6 +27,7 @@ export function createHttpApi({
   controllerStore,
   pending,
   offlineCommand,
+  sessionAuth,
   getNow = () => Date.now(),
   log = () => {}
 }) {
@@ -136,7 +137,11 @@ export function createHttpApi({
         hasActive: offlineCommand.hasActive,
         terminalCount: offlineCommand.terminalCount,
         current: offlineCommand.current()
-      }
+      },
+      sessionAuth:
+        sessionAuth && typeof sessionAuth.status === 'function'
+          ? sessionAuth.status()
+          : { configured: false, state: 'ready', lastError: null, cooldownUntil: 0, attemptsRemaining: 0 }
     });
   });
 

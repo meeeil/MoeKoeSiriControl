@@ -83,7 +83,8 @@ controlServer.app.use(
     controllerConnectionCount: () => controlServer.controllerConnectionCount(),
     controllerStore,
     pending,
-    offlineCommand
+    offlineCommand,
+    sessionAuth
   })
 );
 

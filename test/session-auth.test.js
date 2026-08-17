@@ -21,7 +21,8 @@ test('session-auth exports only the documented error codes', () => {
     'RISK_REQUIRED',
     'AUTH_REJECTED',
     'UPSTREAM_UNAVAILABLE',
-    'TIMEOUT'
+    'TIMEOUT',
+    'BUDGET_EXCEEDED'
   ]);
 });
 
@@ -121,7 +122,7 @@ test('wrong password (status 0, no ssa) -> AUTH_REJECTED', async () => {
   assert.equal(result.code, 'AUTH_REJECTED');
 });
 
-test('AUTH_REJECTED triggers 60s cooldown: repeated login does not hit upstream', async () => {
+test('AUTH_REJECTED hard-stops: retries are suppressed until reset()', async () => {
   let calls = 0;
   const auth = createSessionAuth({
     username: 'u',
@@ -135,26 +136,60 @@ test('AUTH_REJECTED triggers 60s cooldown: repeated login does not hit upstream'
   assert.equal(r1.code, 'AUTH_REJECTED');
   const r2 = await auth.login(device);
   assert.equal(r2.code, 'AUTH_REJECTED');
-  assert.equal(calls, 1, 'cooldown suppresses the second upstream attempt');
+  assert.equal(calls, 1, 'hard stop suppresses the second upstream attempt');
+  assert.equal(auth.status().state, 'hard_stopped');
+  auth.reset();
+  const r3 = await auth.login(device);
+  assert.equal(r3.code, 'AUTH_REJECTED');
+  assert.equal(calls, 2, 'reset() re-enables upstream attempts');
 });
 
-test('cooldown expires -> upstream is contacted again', async () => {
+test('RISK_REQUIRED hard-stops: retries are suppressed even after time passes', async () => {
   let calls = 0;
   let now = 0;
   const auth = createSessionAuth({
     username: 'u',
-    password: 'wrong',
+    password: 'p',
     getNow: () => now,
     fetchImpl: async () => {
       calls += 1;
-      return jsonFetch({ status: 0, error_code: 20017, data: null })();
+      return jsonFetch({ status: 0, error_code: 20028, data: { ssaCode: 'gz_tx_event_x' } })();
     }
   });
-  await auth.login(device);
-  assert.equal(calls, 1);
-  now += 61000;
+  const r1 = await auth.login(device);
+  assert.equal(r1.code, 'RISK_REQUIRED');
+  now += 3600000;
+  const r2 = await auth.login(device);
+  assert.equal(r2.code, 'RISK_REQUIRED');
+  assert.equal(calls, 1, 'risk stop is not a timed cooldown');
+  assert.equal(auth.status().state, 'hard_stopped');
+  auth.reset();
   await auth.login(device);
   assert.equal(calls, 2);
+});
+
+test('transient failure cooldown expires -> upstream is contacted again', async () => {
+  let calls = 0;
+  let now = 0;
+  const auth = createSessionAuth({
+    username: 'u',
+    password: 'p',
+    getNow: () => now,
+    fetchImpl: async () => {
+      calls += 1;
+      throw new TypeError('Failed to fetch');
+    }
+  });
+  const r1 = await auth.login(device);
+  assert.equal(r1.code, 'UPSTREAM_UNAVAILABLE');
+  assert.equal(auth.status().state, 'cooldown');
+  const r2 = await auth.login(device);
+  assert.equal(r2.code, 'UPSTREAM_UNAVAILABLE');
+  assert.equal(calls, 1, 'cooldown suppresses the retry');
+  now += 61000;
+  await auth.login(device);
+  assert.equal(calls, 2, 'cooldown expiry allows another attempt');
+  assert.equal(auth.status().state, 'cooldown');
 });
 
 test('single-flight: concurrent logins produce exactly one upstream request', async () => {
@@ -238,7 +273,7 @@ test('non-200 / non-JSON upstream -> UPSTREAM_UNAVAILABLE', async () => {
   assert.equal((await nonJson.login(device)).code, 'UPSTREAM_UNAVAILABLE');
 });
 
-test('successful login clears cooldown state for the next attempt', async () => {
+test('successful login clears breaker state for the next attempt', async () => {
   let now = 0;
   let calls = 0;
   const auth = createSessionAuth({
@@ -247,22 +282,23 @@ test('successful login clears cooldown state for the next attempt', async () => 
     getNow: () => now,
     fetchImpl: async () => {
       calls += 1;
-      if (calls === 1) return jsonFetch({ status: 0, error_code: 20017, data: null })();
+      if (calls === 1) throw new TypeError('Failed to fetch');
       return jsonFetch({ status: 1, data: { token: 't2' } })();
     }
   });
   const r1 = await auth.login(device);
-  assert.equal(r1.code, 'AUTH_REJECTED');
+  assert.equal(r1.code, 'UPSTREAM_UNAVAILABLE');
   now += 61000;
   const r2 = await auth.login(device);
   assert.equal(r2.ok, true);
   assert.equal(r2.session.token, 't2');
+  assert.equal(auth.status().state, 'ready');
   const r3 = await auth.login(device);
   assert.equal(r3.ok, true, 'a success must not re-enter cooldown');
   assert.equal(calls, 3);
 });
 
-test('reset() clears cooldown immediately', async () => {
+test('reset() clears hard_stopped immediately', async () => {
   let calls = 0;
   const auth = createSessionAuth({
     username: 'u',
@@ -276,4 +312,88 @@ test('reset() clears cooldown immediately', async () => {
   auth.reset();
   await auth.login(device);
   assert.equal(calls, 2);
+});
+
+test('hourly budget: at most 5 real upstream logins, 6th is BUDGET_EXCEEDED', async () => {
+  let calls = 0;
+  let now = 0;
+  const auth = createSessionAuth({
+    username: 'u',
+    password: 'p',
+    getNow: () => now,
+    cooldownMs: 60000,
+    budget: 5,
+    budgetWindowMs: 3600000,
+    fetchImpl: async () => {
+      calls += 1;
+      throw new TypeError('Failed to fetch');
+    }
+  });
+  for (let i = 0; i < 5; i += 1) {
+    const r = await auth.login(device);
+    assert.equal(r.code, 'UPSTREAM_UNAVAILABLE');
+    assert.equal(auth.status().attemptsRemaining, 4 - i);
+    now += 61000;
+  }
+  assert.equal(calls, 5);
+  const sixth = await auth.login(device);
+  assert.equal(sixth.code, 'BUDGET_EXCEEDED');
+  assert.equal(calls, 5, 'budget exhaustion must not hit upstream');
+
+  now += 3600000;
+  const seventh = await auth.login(device);
+  assert.equal(seventh.code, 'UPSTREAM_UNAVAILABLE', 'window rollover restores budget');
+  assert.equal(calls, 6);
+});
+
+test('a successful login clears the hourly budget', async () => {
+  let calls = 0;
+  let now = 0;
+  const auth = createSessionAuth({
+    username: 'u',
+    password: 'p',
+    getNow: () => now,
+    cooldownMs: 60000,
+    budget: 2,
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) throw new TypeError('Failed to fetch');
+      return jsonFetch({ status: 1, data: { token: 't' } })();
+    }
+  });
+  assert.equal((await auth.login(device)).code, 'UPSTREAM_UNAVAILABLE');
+  assert.equal(auth.status().attemptsRemaining, 1);
+  now += 61000;
+  const ok = await auth.login(device);
+  assert.equal(ok.ok, true);
+  assert.equal(auth.status().attemptsRemaining, 2, 'success resets the budget');
+  assert.equal(auth.status().state, 'ready');
+});
+
+test('status() reports configured/state/lastError/cooldownUntil/attemptsRemaining', async () => {
+  let now = 1000;
+  const auth = createSessionAuth({
+    username: 'u',
+    password: 'p',
+    getNow: () => now,
+    fetchImpl: async () => {
+      throw new TypeError('Failed to fetch');
+    }
+  });
+  const idle = auth.status();
+  assert.equal(idle.configured, true);
+  assert.equal(idle.state, 'ready');
+  assert.equal(idle.lastError, null);
+  assert.equal(idle.cooldownUntil, 0);
+  assert.equal(idle.attemptsRemaining, 5);
+
+  await auth.login(device);
+  const cooldown = auth.status();
+  assert.equal(cooldown.state, 'cooldown');
+  assert.equal(cooldown.lastError, 'UPSTREAM_UNAVAILABLE');
+  assert.equal(cooldown.cooldownUntil, now + 60000);
+  assert.equal(cooldown.attemptsRemaining, 4);
+
+  const unconfigured = createSessionAuth({ username: '', password: '' }).status();
+  assert.equal(unconfigured.configured, false);
 });
