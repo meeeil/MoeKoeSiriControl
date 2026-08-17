@@ -11,7 +11,7 @@
  * Exit code non-zero on any failure. Never post-process the built HTML.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, cpSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
@@ -61,6 +61,24 @@ if (dirty) {
   console.error('[build-web] MoeKoeMusic working tree is not clean:');
   console.error(dirty);
   fail('aborting build to avoid generating un-tracked source changes');
+}
+
+// 2b. snapshot the current dist before replacing it (rollback source)
+const distDir = path.resolve(
+  process.env.MOEKOE_DIST_DIR || path.join(moekoeDir, 'dist')
+);
+const backupsDir = path.join(projectRoot, 'backups');
+const prevDir = path.join(backupsDir, 'dist.prev');
+const prevOldDir = path.join(backupsDir, 'dist.prev.old');
+if (existsSync(distDir) && readdirSync(distDir).length > 0) {
+  mkdirSync(backupsDir, { recursive: true });
+  if (existsSync(prevDir)) {
+    rmSync(prevOldDir, { recursive: true, force: true });
+    cpSync(prevDir, prevOldDir, { recursive: true });
+    rmSync(prevDir, { recursive: true, force: true });
+  }
+  cpSync(distDir, prevDir, { recursive: true });
+  console.log('[build-web] snapshot current dist -> backups/dist.prev');
 }
 
 // 3. run vite build

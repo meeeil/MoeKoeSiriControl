@@ -101,6 +101,37 @@ test('health endpoint responds ok with controller state', async () => {
   assert.equal(typeof body.controller.online, 'boolean');
 });
 
+test('health reports upstream + sessionAuth when provided', async () => {
+  const store = createControllerStore({ filePath: null });
+  store.set(CONTROLLER_DEVICE_ID);
+  const sa = {
+    status: () => ({ configured: true, state: 'ready', lastError: null, cooldownUntil: 0, attemptsRemaining: 5 })
+  };
+  const healthServer = createControlServer({
+    authTimeoutMs: 300,
+    heartbeatIntervalMs: 60000,
+    pongTimeoutMs: 60000,
+    controllerStore: store,
+    sessionAuth: sa,
+    upstream: { get: () => ({ reachable: true, status: 200, checkedAt: 123 }), url: 'http://127.0.0.1:6521' }
+  });
+  await new Promise((resolve) => healthServer.httpServer.listen(0, '127.0.0.1', resolve));
+  try {
+    const res = await fetch(`http://127.0.0.1:${healthServer.httpServer.address().port}/health`);
+    const body = await res.json();
+    assert.deepEqual(body.upstream, { url: 'http://127.0.0.1:6521', reachable: true, status: 200, checkedAt: 123 });
+    assert.deepEqual(body.sessionAuth, {
+      configured: true,
+      state: 'ready',
+      lastError: null,
+      cooldownUntil: 0,
+      attemptsRemaining: 5
+    });
+  } finally {
+    await healthServer.close();
+  }
+});
+
 test('auth with correct token (no cookie) -> auth.ok paired=false controller=false', async () => {
   const sock = await connect(wsUrl);
   sendAuth(sock);

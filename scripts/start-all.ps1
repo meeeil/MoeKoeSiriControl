@@ -74,6 +74,41 @@ New-Item -ItemType Directory -Force -Path "$root\run" | Out-Null
 
 $nodeExe = (Get-Command node).Source
 
+function Rotate-Logs {
+    # Archive run/*.log + run/*.err.log before starting fresh, keep the 10 most
+    # recent archives, and delete archived files older than 14 days.
+    $runDir = Join-Path $root 'run'
+    $archiveRoot = Join-Path $runDir 'logs-archive'
+    $logs = @(Get-ChildItem $runDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\.(log|err\.log)$' })
+    if ($logs.Count -gt 0) {
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $dest = Join-Path $archiveRoot $stamp
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        foreach ($log in $logs) {
+            try {
+                Move-Item -LiteralPath $log.FullName -Destination $dest -Force
+            } catch {
+                Write-Warning "[start-all] could not archive $($log.Name) (file in use?) - leaving it"
+            }
+        }
+        Write-Host "[start-all] archived $($logs.Count) log file(s) -> run\logs-archive\$stamp"
+    }
+    $archives = @(Get-ChildItem $archiveRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name)
+    if ($archives.Count -gt 10) {
+        $archives | Select-Object -First ($archives.Count - 10) | ForEach-Object {
+            Remove-Item -LiteralPath $_.FullName -Recurse -Force
+            Write-Host "[start-all] pruned old log archive $($_.Name)"
+        }
+    }
+    $cutoff = (Get-Date).AddDays(-14)
+    Get-ChildItem $archiveRoot -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt $cutoff } | ForEach-Object {
+        Remove-Item -LiteralPath $_.FullName -Force
+    }
+}
+
+# Archive old logs first (keep 10 archives, 14-day retention).
+Rotate-Logs
+
 # 1) API (6521) - skip if already listening
 if (Test-PortListening $apiPort) {
     Write-Host "[start-all] API already listening on :$apiPort - skip"

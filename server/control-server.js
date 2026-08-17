@@ -62,10 +62,16 @@ export function createControlServer(overrides = {}) {
       isController: () => false
     };
 
+  // Phase 6/7: optional upstream reachability cache + session-auth breaker.
+  const upstream = overrides.upstream || { get: () => null, url: null };
+  const sessionAuth = overrides.sessionAuth || null;
+
   const app = express();
   app.disable('x-powered-by');
   app.get('/health', (_req, res) => {
     const controller = controllerStore.get();
+    const up = typeof upstream.get === 'function' ? upstream.get() : null;
+    const sa = sessionAuth && typeof sessionAuth.status === 'function' ? sessionAuth.status() : null;
     res.json({
       ok: true,
       status: 'ok',
@@ -75,7 +81,22 @@ export function createControlServer(overrides = {}) {
       controller: {
         paired: controller.deviceId !== null,
         online: controllerOnline()
-      }
+      },
+      upstream: {
+        url: upstream.url || null,
+        reachable: up ? up.reachable : null,
+        status: up ? up.status : null,
+        checkedAt: up ? up.checkedAt : 0
+      },
+      sessionAuth: sa
+        ? {
+            configured: sa.configured,
+            state: sa.state,
+            lastError: sa.lastError,
+            cooldownUntil: sa.cooldownUntil,
+            attemptsRemaining: sa.attemptsRemaining
+          }
+        : null
     });
   });
 

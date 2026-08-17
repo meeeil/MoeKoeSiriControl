@@ -13,15 +13,24 @@ async function checkUpstream() {
   try {
     const res = await fetch(`${config.MOEKOE_API_URL}/register/dev`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(3000)
     });
     const body = await res.text();
+    upstreamState = {
+      reachable: res.status >= 200 && res.status < 500,
+      status: res.status,
+      checkedAt: Date.now()
+    };
     console.log(`[index] upstream ${config.MOEKOE_API_URL} → HTTP ${res.status} (${body.slice(0, 80)})`);
   } catch (err) {
+    upstreamState = { reachable: false, status: null, error: err.message, checkedAt: Date.now() };
     console.error(`[index] WARNING: upstream ${config.MOEKOE_API_URL} unreachable: ${err.message}`);
     console.error('[index] QR code / rankings / recommendation will fail until the MoeKoeMusic API is running.');
   }
 }
+
+let upstreamState = { reachable: null, status: null, checkedAt: 0 };
 
 const controllerStore = createControllerStore({
   filePath: path.join(config.projectRoot, 'run', 'controller.json'),
@@ -55,6 +64,10 @@ const sessionAuth = createSessionAuth({
 const controlServer = createControlServer({
   sessionAuth,
   controllerStore,
+  upstream: {
+    get: () => upstreamState,
+    url: config.MOEKOE_API_URL
+  },
   handlers: {
     onAck: (ack, connectionId) => {
       if (offlineCommand.handleAck(ack, connectionId)) return;
@@ -97,6 +110,7 @@ controlServer.httpServer.listen(config.CONTROL_PORT, config.CONTROL_HOST, () => 
 });
 
 checkUpstream();
+setInterval(checkUpstream, 60_000).unref();
 
 let shuttingDown = false;
 async function shutdown(signal) {
