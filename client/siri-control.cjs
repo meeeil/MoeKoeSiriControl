@@ -29,7 +29,7 @@ const BUILD = {
   VERSION: '__SIRI_VERSION__'
 };
 
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 
 const SESSION_REFRESH_MS = 45 * 60 * 1000;
 
@@ -950,6 +950,7 @@ function createWsClient(deps) {
     reconnectMaxMs = 30000,
     headers = null,
     onMessage = null,
+    onAuthError = null,
     onDisconnect = null,
     log = () => {},
     getNow = () => Date.now()
@@ -961,6 +962,9 @@ function createWsClient(deps) {
     phase: 'idle',
     connected: false,
     authenticated: false,
+    protocol: version,
+    paired: false,
+    controller: false,
     reconnectCount: 0,
     lastMessageAt: null,
     error: null
@@ -972,6 +976,7 @@ function createWsClient(deps) {
   let permanentFail = false;
   let authTimer = null;
   let livenessTimer = null;
+  let lastError = null;
 
   function clearTimers() {
     if (authTimer) {
@@ -1037,18 +1042,30 @@ function createWsClient(deps) {
           state.authenticated = true;
           state.connected = true;
           state.phase = 'ready';
+          state.protocol = Number.isInteger(msg.version) ? msg.version : version;
+          state.paired = msg.paired === true;
+          state.controller = msg.controller === true;
           resetBackoff();
-          log('authenticated (protocol ' + (msg.version ?? version) + ')');
+          log(
+            'authenticated (protocol ' +
+              state.protocol +
+              ') paired=' +
+              state.paired +
+              ' controller=' +
+              state.controller
+          );
           startLiveness();
         }
         break;
       case 'auth.error':
         state.authenticated = false;
         state.connected = false;
-        state.phase = 'auth_rejected';
+        state.phase = msg.reason === 'protocol_mismatch' ? 'protocol_mismatch' : 'auth_rejected';
         state.error = typeof msg.reason === 'string' ? msg.reason : 'auth_rejected';
+        lastError = state.error;
         permanentFail = true;
-        log('auth rejected:', state.error);
+        log('auth error:', state.error);
+        if (typeof onAuthError === 'function') onAuthError(state.error);
         clearTimers();
         if (socket) {
           try {
@@ -1320,6 +1337,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       url: wsUrl,
       token: BUILD.WS_TOKEN,
       version: PROTOCOL_VERSION,
+      onAuthError: (reason) => {
+        if (reason === 'protocol_mismatch') {
+          log('protocol mismatch — refresh the WebUI to load the updated control client');
+        }
+      },
       onMessage: (msg) => {
         if (msg && msg.type === 'session.reauth.res') {
           const settle = pendingReauth.get(msg.reqId);
@@ -1385,13 +1407,19 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return BUILD.VERSION;
     },
     get protocol() {
-      return PROTOCOL_VERSION;
+      return ws ? ws.state.protocol : PROTOCOL_VERSION;
     },
     get connected() {
       return ws ? ws.state.connected : false;
     },
     get authenticated() {
       return ws ? ws.state.authenticated : false;
+    },
+    get paired() {
+      return ws ? ws.state.paired : false;
+    },
+    get controller() {
+      return ws ? ws.state.controller : false;
     },
     get wsState() {
       return ws ? ws.state.phase : 'unavailable';
@@ -1415,6 +1443,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return commandHandler ? commandHandler.state.lastAck : null;
     },
     get lastError() {
+      if (
+        ws &&
+        ws.state.error &&
+        (ws.state.phase === 'protocol_mismatch' || ws.state.phase === 'auth_rejected')
+      ) {
+        return ws.state.error;
+      }
       return commandHandler ? commandHandler.state.lastError : null;
     },
     get reconnectCount() {
@@ -1433,7 +1468,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     refreshSession: () => refreshLoginSession(),
     get sessionState() {
       return {
-        paired: typeof document !== 'undefined' && document.cookie.indexOf('siri_pair=') !== -1,
+        paired: ws ? ws.state.paired : false,
+        controller: ws ? ws.state.controller : false,
         lastRefreshAt,
         lastRecovery
       };

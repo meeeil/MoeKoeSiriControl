@@ -18,7 +18,7 @@ async function waitFor(fn, timeoutMs = 3000, intervalMs = 10) {
   return fn();
 }
 
-function startMock({ rejectAuth = false } = {}) {
+function startMock({ rejectAuth = false, protocolMismatch = false } = {}) {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   const state = { connections: 0, auths: 0, pongs: [] };
   wss.on('connection', (socket) => {
@@ -29,8 +29,12 @@ function startMock({ rejectAuth = false } = {}) {
         state.auths += 1;
         if (rejectAuth) {
           socket.send(JSON.stringify({ type: 'auth.error', reason: 'invalid_token' }));
+        } else if (protocolMismatch) {
+          socket.send(JSON.stringify({ type: 'auth.error', reason: 'protocol_mismatch', expected: 2 }));
         } else {
-          socket.send(JSON.stringify({ type: 'auth.ok', version: 1 }));
+          socket.send(
+            JSON.stringify({ type: 'auth.ok', version: 2, paired: true, controller: true })
+          );
         }
       } else if (msg.type === 'pong') {
         state.pongs.push(msg.t);
@@ -60,7 +64,7 @@ after(async () => {
   for (const m of mocks) await new Promise((r) => m.wss.close(r));
 });
 
-test('authenticates, then answers server ping with a pong', async () => {
+test('authenticates, records paired/controller, then answers server ping with a pong', async () => {
   const mock = await startMock();
   mocks.push(mock);
 
@@ -80,12 +84,46 @@ test('authenticates, then answers server ping with a pong', async () => {
     assert.ok(await waitFor(() => client.state.authenticated), 'should authenticate');
     assert.ok(client.state.connected);
     assert.equal(client.state.phase, 'ready');
+    assert.equal(client.state.protocol, 2);
+    assert.equal(client.state.paired, true);
+    assert.equal(client.state.controller, true);
     assert.equal(mock.state.auths, 1);
 
     const t = 12345;
     mock.sendAll({ type: 'ping', t });
     assert.ok(await waitFor(() => mock.state.pongs.includes(t)), 'client should answer ping with pong');
     assert.ok(client.state.lastMessageAt != null);
+  } finally {
+    client.stop();
+  }
+});
+
+test('protocol mismatch is permanent (no reconnect loop) and surfaces lastError', async () => {
+  const mock = await startMock({ protocolMismatch: true });
+  mocks.push(mock);
+
+  const authErrors = [];
+  const client = createWsClient({
+    WebSocketCtor: WebSocket,
+    url: mock.url,
+    token: 'secret-token',
+    authTimeoutMs: 800,
+    serverTimeoutMs: 500,
+    reconnectBaseMs: 25,
+    reconnectMaxMs: 120,
+    onAuthError: (reason) => authErrors.push(reason),
+    log: () => {}
+  });
+  client.start();
+
+  try {
+    assert.ok(await waitFor(() => client.state.phase === 'protocol_mismatch'));
+    assert.equal(client.state.authenticated, false);
+    assert.equal(client.state.error, 'protocol_mismatch');
+    assert.deepEqual(authErrors, ['protocol_mismatch']);
+    await sleep(150);
+    assert.equal(client.state.reconnectCount, 0, 'must not reconnect after protocol mismatch');
+    assert.equal(mock.state.connections, 1);
   } finally {
     client.stop();
   }
