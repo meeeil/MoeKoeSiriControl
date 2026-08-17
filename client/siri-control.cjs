@@ -289,6 +289,17 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function readUserActivation() {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.userActivation) {
+      return navigator.userActivation;
+    }
+  } catch (_err) {
+    // ignore
+  }
+  return null;
+}
+
 async function waitForVueApp(timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -803,6 +814,9 @@ function createCommandHandler(deps = {}) {
     getPlayer = () => waitForPlayerControl({ timeoutMs: 15000 }),
     send = () => {},
     getNow = () => Date.now(),
+    userActivation = readUserActivation,
+    pollIntervalMs = 100,
+    pollTimeoutMs = 2000,
     log = () => {}
   } = deps;
 
@@ -882,20 +896,53 @@ function createCommandHandler(deps = {}) {
         return;
       }
 
-      if (result && result.song) {
+      if (result && result.shouldPlayNext) {
+        state.lastError = 'PLAY_FAILED';
+        ackPlay(command.reqId, { ok: false, error: 'PLAY_FAILED' });
+        return;
+      }
+      if (!result || !result.song) {
+        state.lastError = 'PLAY_FAILED';
+        ackPlay(command.reqId, { ok: false, error: 'PLAY_FAILED' });
+        return;
+      }
+
+      const playback = await waitForPlayback(player, song.hash, {
+        pollIntervalMs,
+        pollTimeoutMs
+      });
+      if (playback.ok) {
         state.lastSong = song;
         state.lastError = null;
         ackPlay(command.reqId, { ok: true, song });
-      } else if (result && result.shouldPlayNext) {
-        state.lastError = 'AUTOPLAY_BLOCKED';
-        ackPlay(command.reqId, { ok: false, error: 'AUTOPLAY_BLOCKED' });
       } else {
-        state.lastError = 'PLAY_FAILED';
-        ackPlay(command.reqId, { ok: false, error: 'PLAY_FAILED' });
+        const activation = userActivation();
+        const autoplayBlocked = activation && activation.hasBeenActive === false;
+        state.lastError = autoplayBlocked ? 'AUTOPLAY_BLOCKED' : 'PLAY_FAILED';
+        ackPlay(command.reqId, { ok: false, error: state.lastError });
       }
     } finally {
       state.busy = false;
     }
+  }
+
+  async function waitForPlayback(player, expectedHash, { pollIntervalMs = 100, pollTimeoutMs = 2000 }) {
+    const deadline = getNow() + pollTimeoutMs;
+    while (getNow() < deadline) {
+      let currentHash = null;
+      let playing = false;
+      try {
+        if (player.currentSong && typeof player.currentSong === 'object') {
+          currentHash = player.currentSong.hash;
+        }
+        playing = player.playing === true;
+      } catch (_err) {
+        // player may be recreated while polling; treat as not-yet-playing
+      }
+      if (playing && currentHash === expectedHash) return { ok: true };
+      await delay(pollIntervalMs);
+    }
+    return { ok: false };
   }
 
   function handleMessage(msg) {

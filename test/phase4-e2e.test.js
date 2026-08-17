@@ -76,46 +76,68 @@ function startControllerClient({ search, player }) {
 test('full loop: broadcast play.req -> controller search+play -> play.ack on server', async () => {
   acks.length = 0;
   const calls = [];
+  let playing = false;
+  let currentSong = null;
   const { client } = startControllerClient({
     search: async () => ({ ok: true, payload: successPayload }),
     player: {
+      get playing() {
+        return playing;
+      },
+      get currentSong() {
+        return currentSong;
+      },
       addSongToQueue: async (hash, name, img, author) => {
         calls.push({ hash, name, img, author });
+        currentSong = { hash, name, img, author };
+        playing = true;
         return { song: { hash } };
       }
     }
   });
-  await waitFor(() => client.state.authenticated === true);
+  try {
+    await waitFor(() => client.state.authenticated === true);
 
-  const sent = server.sendPlayRequest({ type: 'play.req', reqId: 'e2e-1', query: '七里香' });
-  assert.equal(sent.sent, true);
-  assert.ok(server.isControllerConnection(sent.connectionId));
+    const sent = server.sendPlayRequest({ type: 'play.req', reqId: 'e2e-1', query: '七里香' });
+    assert.equal(sent.sent, true);
+    assert.ok(server.isControllerConnection(sent.connectionId));
 
-  await waitFor(() => acks.length === 1, 3000);
-  assert.equal(acks[0].reqId, 'e2e-1');
-  assert.equal(acks[0].ok, true);
-  assert.equal(acks[0].song.hash, 'D4B1F7A1A1B1C1D1E1F1A2B2C2D2E2F2A');
-  assert.equal(calls.length, 1);
-
-  client.stop();
-  await waitFor(() => server.activeClients === 0, 1000);
+    await waitFor(() => acks.length === 1, 3000);
+    assert.equal(acks[0].reqId, 'e2e-1');
+    assert.equal(acks[0].ok, true);
+    assert.equal(acks[0].song.hash, 'D4B1F7A1A1B1C1D1E1F1A2B2C2D2E2F2A');
+    assert.equal(calls.length, 1);
+  } finally {
+    client.stop();
+    await waitFor(() => server.activeClients === 0, 1000);
+  }
 });
 
 test('full loop error path: no results -> play.ack with NO_RESULTS', async () => {
   acks.length = 0;
   const { client } = startControllerClient({
     search: async () => ({ ok: true, payload: { status: 1, data: { lists: [] } } }),
-    player: { addSongToQueue: async () => ({ song: { hash: 'x' } }) }
+    player: {
+      get playing() {
+        return false;
+      },
+      get currentSong() {
+        return null;
+      },
+      addSongToQueue: async () => ({ song: { hash: 'x' } })
+    }
   });
-  await waitFor(() => client.state.authenticated === true);
+  try {
+    await waitFor(() => client.state.authenticated === true);
 
-  const sent = server.sendPlayRequest({ type: 'play.req', reqId: 'e2e-2', query: 'zzzz' });
-  assert.equal(sent.sent, true);
-  await waitFor(() => acks.length === 1, 3000);
-  assert.equal(acks[0].reqId, 'e2e-2');
-  assert.equal(acks[0].ok, false);
-  assert.equal(acks[0].error, 'NO_RESULTS');
-
-  client.stop();
-  await waitFor(() => server.activeClients === 0, 1000);
+    const sent = server.sendPlayRequest({ type: 'play.req', reqId: 'e2e-2', query: 'zzzz' });
+    assert.equal(sent.sent, true);
+    await waitFor(() => acks.length === 1, 3000);
+    assert.equal(acks[0].reqId, 'e2e-2');
+    assert.equal(acks[0].ok, false);
+    assert.equal(acks[0].error, 'NO_RESULTS');
+  } finally {
+    client.stop();
+    await waitFor(() => server.activeClients === 0, 1000);
+  }
 });

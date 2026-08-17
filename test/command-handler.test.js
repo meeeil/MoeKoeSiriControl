@@ -28,8 +28,11 @@ function makeHandler(overrides = {}) {
     search: overrides.search,
     refresh: overrides.refresh,
     getPlayer: overrides.getPlayer,
-    send: (obj) => sent.push(obj),
     getNow: overrides.getNow,
+    userActivation: overrides.userActivation,
+    pollIntervalMs: overrides.pollIntervalMs,
+    pollTimeoutMs: overrides.pollTimeoutMs,
+    send: (obj) => sent.push(obj),
     log: () => {}
   });
   return { handler, sent };
@@ -41,8 +44,37 @@ function successSearch() {
 
 function fakePlayer(result = { song: { hash: 'H1' } }) {
   const calls = [];
+  let playing = false;
+  let currentSong = null;
   return {
     calls,
+    get playing() {
+      return playing;
+    },
+    get currentSong() {
+      return currentSong;
+    },
+    addSongToQueue: async (hash, name, img, author) => {
+      calls.push({ hash, name, img, author });
+      if (result && result.song) {
+        currentSong = { hash, name, img, author };
+        playing = true;
+      }
+      return result;
+    }
+  };
+}
+
+function fakeSilentPlayer(result = { song: { hash: 'H1' } }) {
+  const calls = [];
+  return {
+    calls,
+    get playing() {
+      return false;
+    },
+    get currentSong() {
+      return null;
+    },
     addSongToQueue: async (hash, name, img, author) => {
       calls.push({ hash, name, img, author });
       return result;
@@ -231,7 +263,7 @@ test('addSongToQueue rejection acks PLAY_FAILED', async () => {
   assert.equal(sent[0].error, 'PLAY_FAILED');
 });
 
-test('shouldPlayNext result acks AUTOPLAY_BLOCKED', async () => {
+test('shouldPlayNext result acks PLAY_FAILED', async () => {
   const { handler, sent } = makeHandler({
     search: successSearch(),
     getPlayer: async () => fakePlayer({ shouldPlayNext: true })
@@ -239,7 +271,91 @@ test('shouldPlayNext result acks AUTOPLAY_BLOCKED', async () => {
   handler.handleMessage({ type: 'play.req', reqId: 'r8', query: '七里香' });
   await waitFor(() => sent.length > 0);
   assert.equal(sent[0].ok, false);
+  assert.equal(sent[0].error, 'PLAY_FAILED');
+});
+
+test('ack ok requires both expected currentSong.hash and playing=true', async () => {
+  const player = fakePlayer();
+  Object.defineProperty(player, 'playing', { get: () => false });
+  const { handler, sent } = makeHandler({
+    search: successSearch(),
+    getPlayer: async () => player
+  });
+  handler.handleMessage({ type: 'play.req', reqId: 'r13', query: '七里香' });
+  await waitFor(() => sent.length > 0);
+  assert.equal(sent[0].ok, false);
+  assert.equal(sent[0].error, 'PLAY_FAILED');
+  assert.equal(handler.state.lastSong, null, 'must not record a song that is not playing');
+});
+
+test('ack ok requires hash match even when playing=true (old song still playing)', async () => {
+  const player = fakePlayer();
+  Object.defineProperty(player, 'currentSong', { get: () => ({ hash: 'OTHER-SONG', name: '旧歌' }) });
+  const { handler, sent } = makeHandler({
+    search: successSearch(),
+    getPlayer: async () => player
+  });
+  handler.handleMessage({ type: 'play.req', reqId: 'r14', query: '七里香' });
+  await waitFor(() => sent.length > 0);
+  assert.equal(sent[0].ok, false);
+  assert.equal(sent[0].error, 'PLAY_FAILED');
+});
+
+test('delayed playback acks ok once the expected song actually plays', async () => {
+  const player = fakePlayer();
+  const { handler, sent } = makeHandler({
+    search: successSearch(),
+    getPlayer: async () => player,
+    pollIntervalMs: 20,
+    pollTimeoutMs: 2000
+  });
+  handler.handleMessage({ type: 'play.req', reqId: 'r15', query: '七里香' });
+  await waitFor(() => sent.length > 0, 2500);
+  assert.equal(sent[0].ok, true);
+  assert.equal(sent[0].song.hash, 'D4B1F7A1A1B1C1D1E1F1A2B2C2D2E2F2A');
+});
+
+test('playback never starts + userActivation.hasBeenActive=false acks AUTOPLAY_BLOCKED', async () => {
+  const { handler, sent } = makeHandler({
+    search: successSearch(),
+    getPlayer: async () => fakeSilentPlayer(),
+    userActivation: () => ({ hasBeenActive: false }),
+    pollIntervalMs: 10,
+    pollTimeoutMs: 80
+  });
+  handler.handleMessage({ type: 'play.req', reqId: 'r16', query: '七里香' });
+  await waitFor(() => sent.length > 0, 1000);
+  assert.equal(sent[0].ok, false);
   assert.equal(sent[0].error, 'AUTOPLAY_BLOCKED');
+  assert.equal(handler.state.lastError, 'AUTOPLAY_BLOCKED');
+});
+
+test('playback never starts + userActivation unavailable acks PLAY_FAILED', async () => {
+  const { handler, sent } = makeHandler({
+    search: successSearch(),
+    getPlayer: async () => fakeSilentPlayer(),
+    userActivation: () => null,
+    pollIntervalMs: 10,
+    pollTimeoutMs: 60
+  });
+  handler.handleMessage({ type: 'play.req', reqId: 'r17', query: '七里香' });
+  await waitFor(() => sent.length > 0, 1000);
+  assert.equal(sent[0].ok, false);
+  assert.equal(sent[0].error, 'PLAY_FAILED');
+});
+
+test('playback never starts + userActivation.hasBeenActive=true acks PLAY_FAILED', async () => {
+  const { handler, sent } = makeHandler({
+    search: successSearch(),
+    getPlayer: async () => fakeSilentPlayer(),
+    userActivation: () => ({ hasBeenActive: true }),
+    pollIntervalMs: 10,
+    pollTimeoutMs: 60
+  });
+  handler.handleMessage({ type: 'play.req', reqId: 'r18', query: '七里香' });
+  await waitFor(() => sent.length > 0, 1000);
+  assert.equal(sent[0].ok, false);
+  assert.equal(sent[0].error, 'PLAY_FAILED');
 });
 
 test('second play.req while busy acks BUSY (single-flight)', async () => {
