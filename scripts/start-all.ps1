@@ -62,7 +62,7 @@ $moekoeDir = (Get-EnvValue 'MOEKOE_DIR' 'C:\Users\dyk\Desktop\code\MoeKoeMusic')
 $moekoeDist = (Get-EnvValue 'MOEKOE_DIST_DIR' (Join-Path $moekoeDir 'dist'))
 
 if (-not (Test-Path $moekoeDist)) {
-    throw "dist not found ($moekoeDist). Run 'npm run build:web' in MoeKoeSiriControl first."
+    Write-Warning "dist not found ($moekoeDist); it will be built with Siri injection."
 }
 if (-not (Test-Path "$root\server\index.js")) {
     throw "server/index.js not found ($root). Check the project path."
@@ -73,6 +73,27 @@ Ensure-NodeAvailable
 New-Item -ItemType Directory -Force -Path "$root\run" | Out-Null
 
 $nodeExe = (Get-Command node).Source
+
+function Ensure-WebBuild {
+    Write-Host '[start-all] Verifying injected WebUI build ...'
+    & $nodeExe "$root\scripts\verify-build.mjs"
+    if ($LASTEXITCODE -eq 0) {
+        return
+    }
+
+    Write-Warning '[start-all] WebUI build is missing or stale; rebuilding with Siri injection ...'
+    & $nodeExe "$root\scripts\build-web.mjs"
+    if ($LASTEXITCODE -ne 0) {
+        throw "build-web failed with exit code $LASTEXITCODE"
+    }
+
+    & $nodeExe "$root\scripts\verify-build.mjs"
+    if ($LASTEXITCODE -ne 0) {
+        throw "verify-build failed after rebuild with exit code $LASTEXITCODE"
+    }
+}
+
+Ensure-WebBuild
 
 function Rotate-Logs {
     # Archive run/*.log + run/*.err.log before starting fresh, keep the 10 most
