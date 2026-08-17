@@ -1,0 +1,18 @@
+{
+  "status": 1,
+  "error_code": 0,
+  "data": {
+    "lists": [
+      {
+        "type": "song",
+        "position": 1,
+        "lists": []
+      },
+      {
+        "type": "author",
+        "position": 2,
+        "lists": []
+      }
+    ]
+  }
+}

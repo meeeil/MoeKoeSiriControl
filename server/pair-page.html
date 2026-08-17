@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoeKoe Siri 配对</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", sans-serif; background: #f5f5f7; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+  .card { background: #fff; border-radius: 16px; padding: 28px 24px; width: min(92vw, 400px); box-shadow: 0 4px 24px rgba(0,0,0,.08); }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  p { color: #666; font-size: 14px; line-height: 1.6; margin: 6px 0 16px; }
+  input { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #d0d0d5; border-radius: 10px; font-size: 16px; }
+  button { width: 100%; margin-top: 14px; padding: 12px; border: 0; border-radius: 10px; background: #007aff; color: #fff; font-size: 16px; }
+  button:disabled { background: #9bb8d6; }
+  .msg { margin-top: 14px; font-size: 14px; word-break: break-all; }
+  .ok { color: #1d7d3f; }
+  .err { color: #c0392b; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>MoeKoe Siri 配对</h1>
+  <p>输入 .env 中的 SIRI_HTTP_TOKEN，完成一次配对。之后 iPad 会话被挤掉时会自动恢复。</p>
+  <input id="token" type="password" placeholder="SIRI_HTTP_TOKEN" autocomplete="off">
+  <button id="btn" type="button">配对</button>
+  <div id="msg" class="msg"></div>
+</div>
+<script>
+(function () {
+  var btn = document.getElementById('btn');
+  var input = document.getElementById('token');
+  var msg = document.getElementById('msg');
+  btn.addEventListener('click', async function () {
+    var token = input.value.trim();
+    if (!token) { show('请输入 token', false); return; }
+    btn.disabled = true;
+    try {
+      var res = await fetch('/siri/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token })
+      });
+      var body = null;
+      try { body = await res.json(); } catch (e) { /* ignore */ }
+      if (res.ok && body && body.ok) {
+        show('配对成功，可以关闭此页面返回 WebUI。', true);
+      } else if (res.status === 429) {
+        show('尝试过于频繁，请一分钟后重试。', false);
+      } else {
+        show('配对失败：' + (body && body.error ? body.error : ('HTTP ' + res.status)), false);
+      }
+    } catch (err) {
+      show('请求失败：' + String(err && err.message || err), false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') btn.click();
+  });
+  function show(text, ok) {
+    msg.textContent = text;
+    msg.className = 'msg ' + (ok ? 'ok' : 'err');
+  }
+})();
+</script>
+</body>
+</html>

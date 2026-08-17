@@ -1,0 +1,25 @@
+{
+  "name": "moekoe-siri-control",
+  "version": "1.0.0",
+  "description": "MoeKoe Siri Control v1 - Siri Shortcut -> Control Server -> iPad WebUI playback bridge",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:web": "node scripts/build-web.mjs",
+    "verify:web": "node scripts/verify-build.mjs",
+    "test": "node --test",
+    "start": "node server/index.js",
+    "start:all": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-all.ps1",
+    "stop:all": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-all.ps1",
+    "status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/status.ps1"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "http-proxy-middleware": "^3.0.0",
+    "ws": "^8.18.0"
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "status": 1,
+  "error_code": 0,
+  "data": {
+    "lists": [
+      {
+        "type": "author",
+        "position": 1,
+        "lists": [
+          {
+            "AuthorId": "106430",
+            "AuthorName": "周杰伦",
+            "Avatar": "http://singerimg.kugou.com/uploadpic/softhead/400/{size}/20190110-0/webpic3_0_1104061145188714537_640.jpg"
+          }
+        ]
+      },
+      {
+        "type": "song",
+        "position": 2,
+        "lists": [
+          {
+            "FileName": "七里香 - 周杰伦",
+            "FileHash": "D4B1F7A1A1B1C1D1E1F1A2B2C2D2E2F2A",
+            "HQFileHash": "D4B1F7A1A1B1C1D1E1F1A2B2C2D2E2F2A",
+            "SQFileHash": "",
+            "OriSongName": "七里香",
+            "SongName": "七里香",
+            "SingerName": "周杰伦",
+            "Duration": 250,
+            "AlbumName": "七里香",
+            "Image": "http://singerimg.kugou.com/uploadpic/softhead/400/{size}/20190110-0/webpic3_0_1104061145188714537_640.jpg",
+            "IsOriginal": 1,
+            "MvHash": ""
+          },
+          {
+            "FileName": "七里香 (Live) - 周杰伦",
+            "FileHash": "E5C2G8B2B2C2D2E2F2A3B3C3D3E3F3B",
+            "HQFileHash": "E5C2G8B2B2C2D2E2F2A3B3C3D3E3F3B",
+            "SQFileHash": "E5C2G8B2B2C2D2E2F2A3B3C3D3E3F3B",
+            "OriSongName": "七里香 (Live)",
+            "SongName": "七里香 (Live)",
+            "SingerName": "周杰伦",
+            "Duration": 300,
+            "AlbumName": "七里香 Live",
+            "Image": "http://singerimg.kugou.com/uploadpic/softhead/400/{size}/20190110-0/webpic3_0_1104061145188714537_640.jpg"
+          }
+        ]
+      },
+      {
+        "type": "special",
+        "position": 3,
+        "lists": [
+          {
+            "gid": "16386482",
+            "SpecialName": "周杰伦 热门歌曲",
+            "Author": "酷狗音乐"
+          }
+        ]
+      }
+    ]
+  }
+}

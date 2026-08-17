@@ -1,0 +1,8 @@
+# MoeKoe Siri Control
+node_modules/
+logs/
+run/
+backups/
+.env
+*.log
+controller.json
