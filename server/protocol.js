@@ -12,12 +12,14 @@
  */
 import crypto from 'node:crypto';
 
-export function buildAuthOk(version) {
-  return { type: 'auth.ok', version };
+export function buildAuthOk(version, extra = {}) {
+  return { type: 'auth.ok', version, ...extra };
 }
 
-export function buildAuthError(reason) {
-  return { type: 'auth.error', reason };
+export function buildAuthError(reason, expected = undefined) {
+  return expected === undefined
+    ? { type: 'auth.error', reason }
+    : { type: 'auth.error', reason, expected };
 }
 
 export function buildPing(t) {

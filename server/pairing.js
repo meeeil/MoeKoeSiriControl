@@ -1,26 +1,43 @@
 /**
- * iPad pairing (Phase 5.6).
+ * iPad pairing (Phase 1: unique paired controller).
  *
  * The WS token is embedded in the public hashed client script, so it alone
- * must not unlock session recovery (which returns a KuGou login token). The
- * user pairs once by opening /siri/pair on the iPad and submitting
- * SIRI_HTTP_TOKEN; the server answers with a host-only HttpOnly cookie whose
- * value is an HMAC of the HTTP token. The WS server (different port, same
- * host) verifies the cookie at handshake time. Being HMAC-derived, the cookie
- * stays valid across server restarts and cannot be forged without the token.
+ * must not unlock Siri control / session recovery. The user pairs once by
+ * opening /siri/pair on the iPad and submitting SIRI_HTTP_TOKEN; the server
+ * generates a fresh random deviceId, records it as the single controller
+ * (`run/controller.json`), and answers with a host-only HttpOnly cookie:
+ *
+ *   siri_pair=<deviceId>.<signature>
+ *   signature = HMAC-SHA256(SIRI_HTTP_TOKEN, "siri-controller:v1:" + deviceId)
+ *
+ * The WS server (different port, same host) parses the cookie at handshake
+ * time and marks the connection as `controller` only when the deviceId
+ * matches the persisted controller. Being HMAC-derived, the cookie cannot be
+ * forged without the token and survives server restarts.
  */
 import crypto from 'node:crypto';
 import { safeTokenEqual } from './protocol.js';
 
 export const PAIR_COOKIE = 'siri_pair';
-const PAIR_CONTEXT = 'siri-pair:v1';
+const PAIR_CONTEXT_PREFIX = 'siri-controller:v1:';
 
-export function derivePairValue(secret) {
-  return crypto.createHmac('sha256', String(secret)).update(PAIR_CONTEXT).digest('hex');
+export function derivePairValue(secret, deviceId) {
+  return crypto
+    .createHmac('sha256', String(secret))
+    .update(PAIR_CONTEXT_PREFIX + String(deviceId))
+    .digest('hex');
 }
 
-export function verifyPairCookie(cookieHeader, secret) {
-  if (typeof cookieHeader !== 'string' || !cookieHeader) return false;
+export function makePairCookieValue(secret, deviceId) {
+  return `${deviceId}.${derivePairValue(secret, deviceId)}`;
+}
+
+/**
+ * Parse and verify a `siri_pair` cookie header.
+ * @returns {{deviceId: string} | null} deviceId on a valid signature, else null.
+ */
+export function parsePairCookie(cookieHeader, secret) {
+  if (typeof cookieHeader !== 'string' || !cookieHeader) return null;
   let value = null;
   for (const part of cookieHeader.split(';')) {
     const trimmed = part.trim();
@@ -29,8 +46,18 @@ export function verifyPairCookie(cookieHeader, secret) {
       break;
     }
   }
-  if (!value) return false;
-  return safeTokenEqual(value, derivePairValue(secret));
+  if (!value) return null;
+  const dot = value.indexOf('.');
+  if (dot <= 0 || dot >= value.length - 1) return null;
+  const deviceId = value.slice(0, dot);
+  const signature = value.slice(dot + 1);
+  if (!safeTokenEqual(signature, derivePairValue(secret, deviceId))) return null;
+  return { deviceId };
+}
+
+/** Backwards-compatible boolean check: is the cookie present and valid? */
+export function verifyPairCookie(cookieHeader, secret) {
+  return parsePairCookie(cookieHeader, secret) !== null;
 }
 
 export function createPairingLimiter({

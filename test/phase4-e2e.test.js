@@ -3,10 +3,20 @@ import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
 import { readFileSync } from 'node:fs';
 import { createControlServer } from '../server/control-server.js';
+import { createControllerStore } from '../server/controller-store.js';
+import { makePairCookieValue, PAIR_COOKIE } from '../server/pairing.js';
 import config from '../server/config.js';
 import control from '../client/siri-control.cjs';
 
-const { createWsClient, createCommandHandler, PROTOCOL_VERSION } = control;
+const { createWsClient, createCommandHandler } = control;
+
+const CONTROLLER_DEVICE_ID = 'controller-device-1';
+const controllerStore = createControllerStore({ filePath: null });
+controllerStore.set(CONTROLLER_DEVICE_ID);
+const CONTROLLER_COOKIE = `${PAIR_COOKIE}=${makePairCookieValue(
+  config.SIRI_HTTP_TOKEN,
+  CONTROLLER_DEVICE_ID
+)}`;
 
 const successPayload = JSON.parse(
   readFileSync(new URL('./fixtures/search-complex.success.json', import.meta.url), 'utf8')
@@ -30,6 +40,7 @@ const server = createControlServer({
   authTimeoutMs: 500,
   heartbeatIntervalMs: 60,
   pongTimeoutMs: 40,
+  controllerStore,
   handlers: { onAck: (ack) => acks.push(ack) }
 });
 
@@ -42,7 +53,7 @@ before(async () => {
 
 after(() => server.close());
 
-function startClient({ search, player }) {
+function startControllerClient({ search, player }) {
   const handler = createCommandHandler({
     search,
     getPlayer: async () => player,
@@ -53,7 +64,8 @@ function startClient({ search, player }) {
     WebSocketCtor: WebSocket,
     url: wsUrl,
     token: config.SIRI_WS_TOKEN,
-    version: PROTOCOL_VERSION,
+    version: config.PROTOCOL_VERSION,
+    headers: { Cookie: CONTROLLER_COOKIE },
     onMessage: (msg) => handler.handleMessage(msg),
     log: () => {}
   });
@@ -61,10 +73,10 @@ function startClient({ search, player }) {
   return { client, handler };
 }
 
-test('full loop: broadcast play.req -> client search+play -> play.ack on server', async () => {
+test('full loop: broadcast play.req -> controller search+play -> play.ack on server', async () => {
   acks.length = 0;
   const calls = [];
-  const { client } = startClient({
+  const { client } = startControllerClient({
     search: async () => ({ ok: true, payload: successPayload }),
     player: {
       addSongToQueue: async (hash, name, img, author) => {
@@ -75,8 +87,9 @@ test('full loop: broadcast play.req -> client search+play -> play.ack on server'
   });
   await waitFor(() => client.state.authenticated === true);
 
-  const sent = server.broadcast({ type: 'play.req', reqId: 'e2e-1', query: '七里香' });
-  assert.equal(sent, 1);
+  const sent = server.sendPlayRequest({ type: 'play.req', reqId: 'e2e-1', query: '七里香' });
+  assert.equal(sent.sent, true);
+  assert.ok(server.isControllerConnection(sent.connectionId));
 
   await waitFor(() => acks.length === 1, 3000);
   assert.equal(acks[0].reqId, 'e2e-1');
@@ -90,13 +103,14 @@ test('full loop: broadcast play.req -> client search+play -> play.ack on server'
 
 test('full loop error path: no results -> play.ack with NO_RESULTS', async () => {
   acks.length = 0;
-  const { client } = startClient({
+  const { client } = startControllerClient({
     search: async () => ({ ok: true, payload: { status: 1, data: { lists: [] } } }),
     player: { addSongToQueue: async () => ({ song: { hash: 'x' } }) }
   });
   await waitFor(() => client.state.authenticated === true);
 
-  server.broadcast({ type: 'play.req', reqId: 'e2e-2', query: 'zzzz' });
+  const sent = server.sendPlayRequest({ type: 'play.req', reqId: 'e2e-2', query: 'zzzz' });
+  assert.equal(sent.sent, true);
   await waitFor(() => acks.length === 1, 3000);
   assert.equal(acks[0].reqId, 'e2e-2');
   assert.equal(acks[0].ok, false);

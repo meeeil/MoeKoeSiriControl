@@ -1,18 +1,29 @@
 /**
- * Control server (Phase 3: WS auth / heartbeat / origin validation).
+ * Control server (Phase 1/2: unique paired controller + protocol v2).
  *
  * Listens on CONTROL_HOST:CONTROL_PORT, accepts WebSocket upgrades ONLY on
  * config.WS_PATH. HTTP GET /health is provided for basic liveness.
  *
  * WS lifecycle:
- *   connect -> client sends {"type":"auth",...} within WS_AUTH_TIMEOUT_MS
- *   -> {"type":"auth.ok"} | {"type":"auth.error"} + close
+ *   connect -> client sends {"type":"auth","token":"...","version":2} within
+ *   WS_AUTH_TIMEOUT_MS -> {"type":"auth.ok","version":2,"paired":..,"controller":..}
+ *   | {"type":"auth.error",...} + close. Protocol mismatch -> auth.error
+ *   protocol_mismatch + close 1002.
  *   server pings {"type":"ping","t":...} every heartbeatIntervalMs; client
  *   must answer {"type":"pong","t":...} within pongTimeoutMs or the socket
  *   is terminated.
  *
- * Origin: present-but-not-allowed Origins are rejected with 1008. A missing
- * Origin (non-browser clients) is allowed — the WS token is the credential.
+ * Controller gating (Phase 1): a connection is the `controller` only when it
+ * is authenticated (WS token ok) AND its pairing cookie HMAC verifies AND the
+ * cookie deviceId equals the persisted controller.json deviceId. Only the
+ * controller can receive play.req, trigger offline dispatch, settle play.ack,
+ * or use session.reauth.req. Every other authenticated WebUI tab (phone, PC,
+ * extra tabs) stays a normal client and can never steal a command.
+ *
+ * When a second connection authenticates with the same controller deviceId
+ * (e.g. a second tab on the iPad), the older controller connection is revoked
+ * first, pending/offline are notified, and it is closed with code 4001
+ * ("controller_replaced") — newest authenticated tab wins.
  */
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -26,7 +37,7 @@ import {
   parseControlMessage,
   safeTokenEqual
 } from './protocol.js';
-import { verifyPairCookie } from './pairing.js';
+import { parsePairCookie } from './pairing.js';
 
 export function createControlServer(overrides = {}) {
   const limits = {
@@ -43,12 +54,32 @@ export function createControlServer(overrides = {}) {
   const onAuthenticated = typeof handlers.onAuthenticated === 'function' ? handlers.onAuthenticated : null;
   const onDisconnected = typeof handlers.onDisconnected === 'function' ? handlers.onDisconnected : null;
 
+  // Phase 1: single source of truth for "which device is the controller".
+  const controllerStore =
+    overrides.controllerStore ||
+    {
+      get: () => ({ version: 1, deviceId: null, pairedAt: 0, corrupt: false }),
+      isController: () => false
+    };
+
   const app = express();
   app.disable('x-powered-by');
   app.get('/health', (_req, res) => {
-    res.json({ ok: true, protocol: config.PROTOCOL_VERSION });
+    const controller = controllerStore.get();
+    res.json({
+      ok: true,
+      status: 'ok',
+      version: config.VERSION,
+      protocol: config.PROTOCOL_VERSION,
+      uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+      controller: {
+        paired: controller.deviceId !== null,
+        online: controllerOnline()
+      }
+    });
   });
 
+  const startedAt = Date.now();
   const httpServer = http.createServer(app);
   const wss = new WebSocketServer({ server: httpServer, path: config.WS_PATH });
 
@@ -62,11 +93,53 @@ export function createControlServer(overrides = {}) {
     }
   };
 
-  // A WebUI tab on the same PC connects as 127.0.0.1 / ::1; the real target
-  // device (iPad) connects over the LAN with a non-loopback address.
-  function isLoopback(remote) {
-    const r = String(remote || '').toLowerCase();
-    return r === '::1' || r === '::ffff:127.0.0.1' || r === '127.0.0.1' || r.endsWith('127.0.0.1');
+  /** True when at least one controller connection is authenticated+open. */
+  function controllerOnline() {
+    for (const conn of clients) {
+      if (conn.controller && conn.authenticated && conn.socket.readyState === WebSocket.OPEN) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Count of authenticated+open controller connections. */
+  function controllerConnectionCount() {
+    let count = 0;
+    for (const conn of clients) {
+      if (conn.controller && conn.authenticated && conn.socket.readyState === WebSocket.OPEN) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  /** True when the given connection id is the authenticated controller. */
+  function isControllerConnection(connectionId) {
+    for (const conn of clients) {
+      if (conn.id === connectionId && conn.controller && conn.authenticated) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Revoke controller status from every other connection and close it with
+   * 4001, then notify pending/offline of the disconnect.
+   */
+  function replaceControllers(keepConn) {
+    for (const other of clients) {
+      if (other === keepConn || !other.controller || !other.authenticated) continue;
+      other.controller = false;
+      console.log(`[control] controller replaced by newer auth (${other.remote})`);
+      if (onDisconnected) onDisconnected(other);
+      try {
+        other.socket.close(4001, 'controller_replaced');
+      } catch (_err) {
+        // ignore
+      }
+    }
   }
 
   wss.on('connection', (socket, req) => {
@@ -79,11 +152,14 @@ export function createControlServer(overrides = {}) {
       return;
     }
 
+    const pair = parsePairCookie(req.headers.cookie, config.SIRI_HTTP_TOKEN);
     const conn = {
       id: randomUUID(),
       socket,
       remote,
-      paired: false,
+      paired: pair !== null,
+      deviceId: pair ? pair.deviceId : null,
+      controller: false,
       authenticated: false,
       alive: false,
       lastAuthedAt: 0,
@@ -91,10 +167,6 @@ export function createControlServer(overrides = {}) {
       heartbeatTimer: null,
       pongTimeout: null
     };
-    // Phase 5.6: only an iPad that completed /siri/pair carries the HMAC
-    // pairing cookie; it can then ask for session recovery (which yields a
-    // KuGou login token).
-    conn.paired = verifyPairCookie(req.headers.cookie, config.SIRI_HTTP_TOKEN);
     clients.add(conn);
 
     conn.authTimer = setTimeout(() => {
@@ -129,6 +201,12 @@ export function createControlServer(overrides = {}) {
 
       if (!conn.authenticated) {
         if (msg.type === 'auth') {
+          const version = Number.isInteger(msg.version) ? msg.version : 0;
+          if (version !== config.PROTOCOL_VERSION) {
+            send(socket, buildAuthError('protocol_mismatch', config.PROTOCOL_VERSION));
+            setTimeout(() => socket.close(1002, 'protocol_mismatch'), 100);
+            return;
+          }
           if (
             typeof msg.token === 'string' &&
             msg.token.length > 0 &&
@@ -138,8 +216,14 @@ export function createControlServer(overrides = {}) {
             conn.alive = true;
             conn.lastAuthedAt = Date.now();
             clearTimeout(conn.authTimer);
-            send(socket, buildAuthOk(config.PROTOCOL_VERSION));
-            console.log(`[control] authenticated (${remote})`);
+            conn.controller =
+              conn.paired && controllerStore.isController(conn.deviceId);
+            if (conn.controller) replaceControllers(conn);
+            send(socket, buildAuthOk(config.PROTOCOL_VERSION, {
+              paired: conn.paired,
+              controller: conn.controller
+            }));
+            console.log(`[control] authenticated (${remote}) controller=${conn.controller}`);
             if (onAuthenticated) onAuthenticated(conn);
           } else {
             send(socket, buildAuthError('invalid_token'));
@@ -158,18 +242,22 @@ export function createControlServer(overrides = {}) {
           }
           break;
         case 'play.ack':
+          if (!conn.controller) {
+            console.log(`[control] ignored play.ack from non-controller (${remote})`);
+            break;
+          }
           if (typeof msg.reqId === 'string' && msg.reqId) {
             console.log(`[control] ack reqId=${msg.reqId} ok=${msg.ok === true}`);
             if (onAck) onAck(msg);
           }
           break;
         case 'session.reauth.req': {
-          // Phase 5.6: password-login recovery on behalf of a paired iPad.
+          // Phase 5.6: password-login recovery on behalf of the paired iPad.
           // The response is sent only to the originating socket (never
-          // broadcast) and only after the WS auth + pairing cookie checks.
+          // broadcast) and only after WS auth + controller checks.
           const reqId = typeof msg.reqId === 'string' && msg.reqId ? msg.reqId : null;
           if (!reqId) break;
-          if (!conn.paired) {
+          if (!conn.controller) {
             send(socket, { type: 'session.reauth.res', reqId, ok: false, error: 'PAIR_REQUIRED' });
             break;
           }
@@ -244,6 +332,9 @@ export function createControlServer(overrides = {}) {
       }
       return count;
     },
+    controllerOnline,
+    controllerConnectionCount,
+    isControllerConnection,
     broadcast(obj) {
       const text = JSON.stringify(obj);
       let count = 0;
@@ -259,29 +350,25 @@ export function createControlServer(overrides = {}) {
       }
       return count;
     },
-    // Phase 5 fix: play.req must reach exactly ONE client to avoid duplicate
-    // playback and racing acks (e.g. an unauthenticated WebUI tab on the PC
-    // answering SEARCH_FAILED before the iPad). Prefer a non-loopback peer
-    // (the physical device), then the most recently authenticated one.
+    // Phase 1: play.req must reach ONLY the unique paired controller. Returns
+    // {sent, connectionId} (never a bare 0/1).
     sendPlayRequest(obj) {
-      let best = null;
+      let target = null;
       for (const conn of clients) {
-        if (!conn.authenticated || conn.socket.readyState !== WebSocket.OPEN) continue;
-        if (!best) {
-          best = conn;
+        if (
+          !conn.controller ||
+          !conn.authenticated ||
+          conn.socket.readyState !== WebSocket.OPEN
+        ) {
           continue;
         }
-        const bestLoop = isLoopback(best.remote);
-        const curLoop = isLoopback(conn.remote);
-        if (bestLoop && !curLoop) {
-          best = conn;
-        } else if (bestLoop === curLoop && conn.lastAuthedAt > best.lastAuthedAt) {
-          best = conn;
+        if (!target || conn.lastAuthedAt > target.lastAuthedAt) {
+          target = conn;
         }
       }
-      if (!best) return 0;
-      send(best.socket, obj);
-      return 1;
+      if (!target) return { sent: false, connectionId: null };
+      send(target.socket, obj);
+      return { sent: true, connectionId: target.id };
     },
     // Deliver a message to one specific connection by id (offline re-dispatch).
     // Returns 1 on send, 0 if the connection is gone / not open.

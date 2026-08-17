@@ -1,15 +1,18 @@
 /**
- * HTTP API (Phase 5) mounted on the control server's express app (port 8200).
+ * HTTP API (Phase 1/4/5) mounted on the control server's express app (port 8200).
  *
- *   POST /api/siri/play   body {"query":"..."}  (or ?query=) + x-siri-token
+ *   POST /api/siri/play   body {"query":"..."}  + x-siri-token
+ *   GET  /api/siri/commands/:reqId   x-siri-token required
  *   GET  /debug/status    x-siri-token required
  *
- * Flow: check auth -> check an authenticated WS client exists -> submit pending
- * -> broadcast play.req -> wait for the matching play.ack (up to
- * HTTP_ACK_WAIT_MS) -> respond with the ack.
+ * Flow: check auth -> is the paired controller online? -> submit pending
+ * -> send play.req to the controller -> wait for the matching play.ack (up to
+ * HTTP_ACK_WAIT_MS) -> respond with the ack. When the controller is offline
+ * (even if ordinary WebUI tabs are online) the request is parked in the
+ * offline single-slot and answered 202 queued.
  *
- * Token is accepted via `x-siri-token` header (preferred) or `token` query
- * param; compared in constant time.
+ * Token is accepted ONLY via the `x-siri-token` header, compared in constant
+ * time. Query-string tokens are rejected.
  */
 import express from 'express';
 import config from './config.js';
@@ -20,6 +23,9 @@ export function createHttpApi({
   sendPlayRequest,
   authenticatedClients,
   activeClients,
+  controllerOnline,
+  controllerConnectionCount,
+  controllerStore,
   pending,
   offlineCommand,
   getNow = () => Date.now(),
@@ -29,9 +35,7 @@ export function createHttpApi({
   router.use(express.json());
 
   function authed(req, res, next) {
-    const header = req.headers['x-siri-token'];
-    const queryToken = typeof req.query.token === 'string' ? req.query.token : '';
-    const candidate = typeof header === 'string' ? header : queryToken;
+    const candidate = typeof req.headers['x-siri-token'] === 'string' ? req.headers['x-siri-token'] : '';
     if (!candidate || !safeTokenEqual(candidate, config.SIRI_HTTP_TOKEN)) {
       return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
     }
@@ -55,17 +59,17 @@ export function createHttpApi({
       return res.status(400).json({ ok: false, error: 'BAD_REQUEST', message: 'query is required' });
     }
 
-    if (authenticatedClients() === 0) {
+    const online = typeof controllerOnline === 'function' ? controllerOnline() : false;
+    if (!online) {
       const queued = offlineCommand.submit(query);
-      log('[http] play queued (no client)', queued.reqId, `query=${query}`);
+      log('[http] play queued (controller offline)', queued.reqId, `query=${query}`);
       return queuedResponse(res, queued);
     }
 
     const { reqId, expiresAt, promise } = pending.submit(query);
-    const dispatch = typeof sendPlayRequest === 'function' ? sendPlayRequest : broadcast;
-    const sent = dispatch({ type: 'play.req', reqId, query, expiresAt });
-    if (sent === 0) {
-      // Race: a client was detected but vanished before delivery. Park the
+    const sent = sendPlayRequest({ type: 'play.req', reqId, query, expiresAt });
+    if (!sent || sent.sent !== true) {
+      // Race: the controller vanished between the check and delivery. Park the
       // command in the offline slot instead of failing with NO_CLIENT.
       pending.handleAck({ reqId, ok: false, error: 'NO_CLIENT' });
       const queued = offlineCommand.submit(query);
@@ -107,12 +111,21 @@ export function createHttpApi({
   });
 
   router.get('/debug/status', authed, (_req, res) => {
+    const controller = controllerStore && typeof controllerStore.get === 'function'
+      ? controllerStore.get()
+      : { deviceId: null, corrupt: false };
     res.json({
       ok: true,
       version: config.VERSION,
       protocol: config.PROTOCOL_VERSION,
       activeClients: activeClients(),
       authenticatedClients: authenticatedClients(),
+      controller: {
+        paired: controller.deviceId !== null,
+        online: typeof controllerOnline === 'function' ? controllerOnline() : false,
+        connections: typeof controllerConnectionCount === 'function' ? controllerConnectionCount() : 0,
+        abnormal: !!(controller && controller.corrupt)
+      },
       pending: {
         count: pending.count,
         items: pending.list()

@@ -5,6 +5,9 @@ import { createPendingCoordinator } from './pending.js';
 import { createOfflineCommand } from './offline-command.js';
 import { createHttpApi } from './http-api.js';
 import { createSessionAuth } from './session-auth.js';
+import { createControllerStore } from './controller-store.js';
+import path from 'node:path';
+import fs from 'node:fs';
 
 async function checkUpstream() {
   try {
@@ -20,7 +23,18 @@ async function checkUpstream() {
   }
 }
 
-const webApp = createWebHost();
+const controllerStore = createControllerStore({
+  filePath: path.join(config.projectRoot, 'run', 'controller.json'),
+  log: (...args) => console.log('[controller]', ...args)
+});
+const controller = controllerStore.get();
+if (controller.deviceId) {
+  console.log(`[index] controller paired: ${controller.deviceId} (${new Date(controller.pairedAt).toISOString()})`);
+} else {
+  console.log(`[index] no controller paired yet — open http://<host>:${config.WEB_PORT}/siri/pair on the target iPad${controller.corrupt ? ' (controller.json corrupt)' : ''}`);
+}
+
+const webApp = createWebHost({ controllerStore });
 const webServer = webApp.listen(config.WEB_PORT, config.WEB_HOST, () => {
   console.log(`[index] web host: http://${config.WEB_HOST}:${config.WEB_PORT} (serving ${config.MOEKOE_DIST_DIR})`);
   console.log(`[index] api proxy: ${config.MOEKOE_API_URL}`);
@@ -40,12 +54,15 @@ const sessionAuth = createSessionAuth({
 
 const controlServer = createControlServer({
   sessionAuth,
+  controllerStore,
   handlers: {
-    onAck: (ack) => {
-      if (offlineCommand.handleAck(ack)) return;
-      pending.handleAck(ack);
+    onAck: (ack, connectionId) => {
+      if (offlineCommand.handleAck(ack, connectionId)) return;
+      pending.handleAck(ack, connectionId);
     },
     onAuthenticated: (conn) => {
+      // Only the paired controller can trigger offline dispatch.
+      if (!conn.controller) return;
       offlineCommand.dispatch({
         id: conn.id,
         send: (obj) => controlServer.sendTo(conn.id, obj)
@@ -63,6 +80,9 @@ controlServer.app.use(
     sendPlayRequest: controlServer.sendPlayRequest,
     authenticatedClients: () => controlServer.authenticatedClients,
     activeClients: () => controlServer.activeClients,
+    controllerOnline: () => controlServer.controllerOnline(),
+    controllerConnectionCount: () => controlServer.controllerConnectionCount(),
+    controllerStore,
     pending,
     offlineCommand
   })

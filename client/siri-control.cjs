@@ -948,6 +948,7 @@ function createWsClient(deps) {
     serverTimeoutMs = 45000,
     reconnectBaseMs = 1000,
     reconnectMaxMs = 30000,
+    headers = null,
     onMessage = null,
     onDisconnect = null,
     log = () => {},
@@ -1096,7 +1097,7 @@ function createWsClient(deps) {
 
     let sock;
     try {
-      sock = new WebSocketCtor(url);
+      sock = new WebSocketCtor(url, undefined, { headers });
     } catch (err) {
       scheduleReconnect('connect_failed');
       return;

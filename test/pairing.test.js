@@ -2,32 +2,55 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   derivePairValue,
+  makePairCookieValue,
+  parsePairCookie,
   verifyPairCookie,
   createPairingLimiter,
   PAIR_COOKIE
 } from '../server/pairing.js';
 
 const SECRET = 'a'.repeat(32);
+const DEVICE_ID = 'device-uuid-1';
 
-test('derivePairValue is deterministic per secret', () => {
-  const a = derivePairValue(SECRET);
-  const b = derivePairValue(SECRET);
+test('derivePairValue is deterministic per secret and deviceId', () => {
+  const a = derivePairValue(SECRET, DEVICE_ID);
+  const b = derivePairValue(SECRET, DEVICE_ID);
   assert.equal(a, b);
-  assert.notEqual(a, derivePairValue('b'.repeat(32)));
+  assert.notEqual(a, derivePairValue('b'.repeat(32), DEVICE_ID));
+  assert.notEqual(a, derivePairValue(SECRET, 'other-device'));
 });
 
-test('verifyPairCookie accepts a valid cookie header', () => {
-  const value = derivePairValue(SECRET);
-  assert.equal(verifyPairCookie(`${PAIR_COOKIE}=${value}; other=1`, SECRET), true);
+test('makePairCookieValue returns <deviceId>.<signature>', () => {
+  const value = makePairCookieValue(SECRET, DEVICE_ID);
+  assert.ok(value.startsWith(DEVICE_ID + '.'));
+  const sig = value.slice(DEVICE_ID.length + 1);
+  assert.equal(sig, derivePairValue(SECRET, DEVICE_ID));
+  assert.ok(sig.length >= 32);
 });
 
-test('verifyPairCookie rejects wrong value / wrong secret / missing cookie', () => {
-  const value = derivePairValue(SECRET);
+test('parsePairCookie accepts a valid cookie and returns the deviceId', () => {
+  const value = makePairCookieValue(SECRET, DEVICE_ID);
+  const parsed = parsePairCookie(`${PAIR_COOKIE}=${value}; other=1`, SECRET);
+  assert.deepEqual(parsed, { deviceId: DEVICE_ID });
+});
+
+test('parsePairCookie rejects wrong value / wrong secret / missing / malformed', () => {
+  const value = makePairCookieValue(SECRET, DEVICE_ID);
+  assert.equal(parsePairCookie(`${PAIR_COOKIE}=${value}`, 'wrong-secret'), null);
+  assert.equal(parsePairCookie(`${PAIR_COOKIE}=forged.device.signature`, SECRET), null);
+  assert.equal(parsePairCookie(`${PAIR_COOKIE}=${value.slice(0, -1)}x`, SECRET), null);
+  assert.equal(parsePairCookie(`${PAIR_COOKIE}=no-dot-separator`, SECRET), null);
+  assert.equal(parsePairCookie(`${PAIR_COOKIE}=.missingdevice${derivePairValue(SECRET, '')}`, SECRET), null);
+  assert.equal(parsePairCookie('other=1', SECRET), null);
+  assert.equal(parsePairCookie('', SECRET), null);
+  assert.equal(parsePairCookie(undefined, SECRET), null);
+});
+
+test('verifyPairCookie stays true/false for valid/invalid cookies', () => {
+  const value = makePairCookieValue(SECRET, DEVICE_ID);
+  assert.equal(verifyPairCookie(`${PAIR_COOKIE}=${value}`, SECRET), true);
   assert.equal(verifyPairCookie(`${PAIR_COOKIE}=${value}`, 'wrong-secret'), false);
   assert.equal(verifyPairCookie(`${PAIR_COOKIE}=forged`, SECRET), false);
-  assert.equal(verifyPairCookie('other=1', SECRET), false);
-  assert.equal(verifyPairCookie('', SECRET), false);
-  assert.equal(verifyPairCookie(undefined, SECRET), false);
 });
 
 test('createPairingLimiter allows up to limit hits then blocks within the window', () => {

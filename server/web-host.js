@@ -1,17 +1,18 @@
 import express from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import config from './config.js';
 import { safeTokenEqual } from './protocol.js';
 import {
-  derivePairValue,
+  makePairCookieValue,
   createPairingLimiter,
   PAIR_COOKIE
 } from './pairing.js';
 
 const HASHED_ASSET_RE = /[-.][A-Za-z0-9_-]{8,}\.(?:js|css|png|jpe?g|gif|svg|webp|woff2?|ico)$/i;
 
-export function createWebHost() {
+export function createWebHost({ controllerStore } = {}) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -58,11 +59,15 @@ export function createWebHost() {
     if (!candidate || !safeTokenEqual(candidate, config.SIRI_HTTP_TOKEN)) {
       return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
     }
+    const deviceId = randomUUID();
+    if (controllerStore && typeof controllerStore.set === 'function') {
+      controllerStore.set(deviceId);
+    }
     res.setHeader(
       'Set-Cookie',
-      `${PAIR_COOKIE}=${derivePairValue(config.SIRI_HTTP_TOKEN)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000`
+      `${PAIR_COOKIE}=${makePairCookieValue(config.SIRI_HTTP_TOKEN, deviceId)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000`
     );
-    return res.json({ ok: true });
+    return res.json({ ok: true, deviceId });
   });
 
   const staticMiddleware = express.static(config.MOEKOE_DIST_DIR, {

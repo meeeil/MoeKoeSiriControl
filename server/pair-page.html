@@ -43,7 +43,8 @@
       var body = null;
       try { body = await res.json(); } catch (e) { /* ignore */ }
       if (res.ok && body && body.ok) {
-        show('配对成功，可以关闭此页面返回 WebUI。', true);
+        show('配对成功，正在跳转回播放器…', true);
+        setTimeout(function () { location.href = '/#/'; }, 800);
       } else if (res.status === 429) {
         show('尝试过于频繁，请一分钟后重试。', false);
       } else {

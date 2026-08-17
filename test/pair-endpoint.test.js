@@ -25,7 +25,7 @@ test('GET /siri/pair serves the pairing page', async () => {
   assert.match(html, /siri\/pair/);
 });
 
-test('POST /siri/pair with correct token sets an HMAC pairing cookie', async () => {
+test('POST /siri/pair with correct token sets a device-scoped HMAC cookie', async () => {
   const res = await fetch(`${baseUrl}/siri/pair`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -34,12 +34,15 @@ test('POST /siri/pair with correct token sets an HMAC pairing cookie', async () 
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.ok, true);
+  assert.equal(typeof body.deviceId, 'string');
+  assert.ok(body.deviceId.length > 0, 'a fresh device id must be minted');
   const setCookie = res.headers.get('set-cookie') || '';
   assert.match(setCookie, new RegExp(`^${PAIR_COOKIE}=`));
   assert.match(setCookie, /HttpOnly/i);
   assert.match(setCookie, /SameSite=Strict/i);
   assert.match(setCookie, /Path=\//);
   const value = setCookie.split(';')[0].split('=')[1];
+  assert.ok(value.startsWith(body.deviceId + '.'), 'cookie value embeds the deviceId');
   assert.equal(verifyPairCookie(`${PAIR_COOKIE}=${value}`, config.SIRI_HTTP_TOKEN), true);
 });
 
