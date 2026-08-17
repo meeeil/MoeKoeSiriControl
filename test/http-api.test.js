@@ -37,9 +37,9 @@ const server = createControlServer({
   pongTimeoutMs: 60000,
   controllerStore,
   handlers: {
-    onAck: (ack) => {
-      if (offlineCommand.handleAck(ack)) return;
-      pending.handleAck(ack);
+    onAck: (ack, connectionId) => {
+      if (offlineCommand.handleAck(ack, connectionId)) return;
+      pending.handleAck(ack, connectionId);
     },
     onAuthenticated: (conn) => {
       if (!conn.controller) return;
@@ -56,7 +56,6 @@ const server = createControlServer({
 
 server.app.use(
   createHttpApi({
-    broadcast: server.broadcast,
     sendPlayRequest: server.sendPlayRequest,
     authenticatedClients: () => server.authenticatedClients,
     activeClients: () => server.activeClients,
@@ -345,7 +344,6 @@ test('send race (controller vanished after check) -> 202 queued instead of NO_CL
   const app = express();
   app.use(
     createHttpApi({
-      broadcast: () => 0,
       sendPlayRequest: () => ({ sent: false, connectionId: null }),
       authenticatedClients: () => 1,
       activeClients: () => 0,

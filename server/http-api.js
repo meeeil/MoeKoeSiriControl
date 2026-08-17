@@ -19,7 +19,6 @@ import config from './config.js';
 import { safeTokenEqual } from './protocol.js';
 
 export function createHttpApi({
-  broadcast,
   sendPlayRequest,
   authenticatedClients,
   activeClients,
@@ -71,11 +70,13 @@ export function createHttpApi({
     if (!sent || sent.sent !== true) {
       // Race: the controller vanished between the check and delivery. Park the
       // command in the offline slot instead of failing with NO_CLIENT.
-      pending.handleAck({ reqId, ok: false, error: 'NO_CLIENT' });
+      pending.handleAck({ reqId, ok: false, error: 'NO_CLIENT' }, null);
       const queued = offlineCommand.submit(query);
       log('[http] play re-queued (dispatch race)', queued.reqId, `query=${query}`);
       return queuedResponse(res, queued);
     }
+    // An ACK is only accepted from the connection that received this play.req.
+    pending.setTarget(reqId, sent.connectionId);
     log('[http] play sent', reqId, `query=${query}`);
 
     const ack = await promise;

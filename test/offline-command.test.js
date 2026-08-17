@@ -59,10 +59,24 @@ test('successful ACK settles the command as succeeded', () => {
   const peer = makePeer('a');
   oc.dispatch(peer);
   const reqId = peer.sent[0].reqId;
-  assert.equal(oc.handleAck({ reqId, ok: true, song: { name: '七里香' } }), true);
+  assert.equal(oc.handleAck({ reqId, ok: true, song: { name: '七里香' } }, 'a'), true);
   const snap = oc.get(reqId);
   assert.equal(snap.state, 'succeeded');
   assert.equal(snap.ack.song.name, '七里香');
+});
+
+test('an ack from a connection other than the target is ignored with a warning', () => {
+  const warned = [];
+  const oc = createOfflineCommand({ log: (...args) => warned.push(args) });
+  oc.submit('x');
+  const a = makePeer('a');
+  oc.dispatch(a);
+  const reqId = a.sent[0].reqId;
+  assert.equal(oc.handleAck({ reqId, ok: true }, 'other-conn'), false);
+  assert.ok(warned.length >= 1, 'must log a warning');
+  assert.equal(oc.current().state, 'dispatched', 'command must stay dispatched');
+  assert.equal(oc.handleAck({ reqId, ok: true }, 'a'), true);
+  assert.equal(oc.get(reqId).state, 'succeeded');
 });
 
 test('failure ACK settles the command as failed with error', () => {
@@ -71,7 +85,7 @@ test('failure ACK settles the command as failed with error', () => {
   const peer = makePeer('a');
   oc.dispatch(peer);
   const reqId = peer.sent[0].reqId;
-  assert.equal(oc.handleAck({ reqId, ok: false, error: 'PLAYER_NOT_READY' }), true);
+  assert.equal(oc.handleAck({ reqId, ok: false, error: 'PLAYER_NOT_READY' }, 'a'), true);
   const snap = oc.get(reqId);
   assert.equal(snap.state, 'failed');
   assert.equal(snap.ack.error, 'PLAYER_NOT_READY');
@@ -143,7 +157,7 @@ test('terminal states are pruned after terminalRetainMs', async () => {
   const { reqId } = oc.submit('x');
   const peer = makePeer('a');
   oc.dispatch(peer);
-  oc.handleAck({ reqId, ok: true });
+  oc.handleAck({ reqId, ok: true }, 'a');
   assert.equal(oc.get(reqId).state, 'succeeded');
   await sleep(80);
   oc.prune();
@@ -169,6 +183,6 @@ test('repeated dispatch after settle returns false (single-slot)', () => {
   oc.submit('x');
   const a = makePeer('a');
   oc.dispatch(a);
-  oc.handleAck({ reqId: a.sent[0].reqId, ok: true });
+  oc.handleAck({ reqId: a.sent[0].reqId, ok: true }, 'a');
   assert.equal(oc.dispatch(a), false);
 });

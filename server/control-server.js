@@ -248,7 +248,7 @@ export function createControlServer(overrides = {}) {
           }
           if (typeof msg.reqId === 'string' && msg.reqId) {
             console.log(`[control] ack reqId=${msg.reqId} ok=${msg.ok === true}`);
-            if (onAck) onAck(msg);
+            if (onAck) onAck(msg, conn.id);
           }
           break;
         case 'session.reauth.req': {

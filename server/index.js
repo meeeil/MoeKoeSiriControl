@@ -76,7 +76,6 @@ const controlServer = createControlServer({
 
 controlServer.app.use(
   createHttpApi({
-    broadcast: controlServer.broadcast,
     sendPlayRequest: controlServer.sendPlayRequest,
     authenticatedClients: () => controlServer.authenticatedClients,
     activeClients: () => controlServer.activeClients,

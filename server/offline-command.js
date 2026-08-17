@@ -109,10 +109,20 @@ export function createOfflineCommand({
     return true;
   }
 
-  function handleAck(ack) {
+  function handleAck(ack, connectionId) {
     const reqId = ack && ack.reqId;
     if (!slot || slot.reqId !== reqId) return false;
     if (slot.state !== 'dispatched' && slot.state !== 'queued') return true;
+    if (slot.targetConnectionId && slot.targetConnectionId !== connectionId) {
+      log(
+        'offline warn: ignoring play.ack from non-target connection',
+        connectionId,
+        'expected',
+        slot.targetConnectionId,
+        'reqId=' + reqId
+      );
+      return false;
+    }
     const now = getNow();
     slot.ack = ack;
     if (ack && ack.ok === true) {
