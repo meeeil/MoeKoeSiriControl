@@ -36,11 +36,14 @@ function Ensure-NodeAvailable {
 # calling terminal returns immediately instead of waiting on the server's handles.
 # Writes a small .cmd batch file (which owns cd + redirection) and WMI-launches
 # it with a HIDDEN window (no black console boxes).
-function Start-DetachedProcess([string]$name, [string]$workDir, [string]$command, [string]$outLog, [string]$errLog) {
+function Start-DetachedProcess([string]$name, [string]$workDir, [string]$command, [string]$outLog, [string]$errLog, [string[]]$envLines = @()) {
     $batchPath = Join-Path $root "run\start-$name.cmd"
     $content = '@echo off' + [Environment]::NewLine +
-        "cd /d `"$workDir`"" + [Environment]::NewLine +
-        "$command 1> `"$outLog`" 2> `"$errLog`"" + [Environment]::NewLine
+        "cd /d `"$workDir`"" + [Environment]::NewLine
+    foreach ($line in $envLines) {
+        $content += $line + [Environment]::NewLine
+    }
+    $content += "$command 1> `"$outLog`" 2> `"$errLog`"" + [Environment]::NewLine
     Set-Content -LiteralPath $batchPath -Value $content -Encoding Ascii
     $startupInfo = ([wmiclass]'Win32_ProcessStartup').CreateInstance()
     $startupInfo.ShowWindow = 0
@@ -75,9 +78,9 @@ $nodeExe = (Get-Command node).Source
 if (Test-PortListening $apiPort) {
     Write-Host "[start-all] API already listening on :$apiPort - skip"
 } else {
-    Write-Host "[start-all] Starting API on :$apiPort ..."
+    Write-Host "[start-all] Starting API on 127.0.0.1:$apiPort ..."
     Start-DetachedProcess 'api' $moekoeDir "`"$nodeExe`" api/app.js --platform=lite --port=$apiPort" `
-        "$root\run\api.log" "$root\run\api.err.log"
+        "$root\run\api.log" "$root\run\api.err.log" @('set HOST=127.0.0.1')
 }
 
 # 2) Web host + control service (8080 + 8200) - skip if already listening
