@@ -1130,6 +1130,12 @@ function createWsClient(deps) {
         break;
     }
 
+    // Every valid server message proves that the connection is alive.  Reset
+    // the silence deadline here (especially for heartbeat ping messages), or
+    // an otherwise healthy browser will reconnect unconditionally when the
+    // original post-auth timer expires.
+    if (state.authenticated) startLiveness();
+
     if (
       msg.type !== 'auth.ok' &&
       msg.type !== 'auth.error' &&

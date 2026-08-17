@@ -98,6 +98,37 @@ test('authenticates, records paired/controller, then answers server ping with a 
   }
 });
 
+test('server heartbeats keep the connection alive beyond the silence timeout', async () => {
+  const mock = await startMock();
+  mocks.push(mock);
+
+  const client = createWsClient({
+    WebSocketCtor: WebSocket,
+    url: mock.url,
+    token: 'secret-token',
+    authTimeoutMs: 800,
+    serverTimeoutMs: 120,
+    reconnectBaseMs: 20,
+    reconnectMaxMs: 100,
+    log: () => {}
+  });
+  client.start();
+
+  let t = 0;
+  const heartbeat = setInterval(() => mock.sendAll({ type: 'ping', t: ++t }), 35);
+  try {
+    assert.ok(await waitFor(() => client.state.authenticated), 'should authenticate');
+    await sleep(350);
+    assert.equal(client.state.authenticated, true);
+    assert.equal(client.state.reconnectCount, 0, 'heartbeat must prevent reconnect');
+    assert.equal(mock.state.connections, 1, 'server should still have the original connection');
+    assert.ok(mock.state.pongs.length >= 3, 'client should keep answering heartbeats');
+  } finally {
+    clearInterval(heartbeat);
+    client.stop();
+  }
+});
+
 test('protocol mismatch is permanent (no reconnect loop) and surfaces lastError', async () => {
   const mock = await startMock({ protocolMismatch: true });
   mocks.push(mock);
