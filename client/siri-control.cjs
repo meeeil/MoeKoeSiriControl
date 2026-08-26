@@ -1621,7 +1621,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     ensureConnectedNow: () => {
       ensureConnectedNow();
       return true;
-    }
+    },
+    openUI: () => openSiriModal(),
+    closeUI: () => closeSiriModal()
   };
 
   try {
@@ -1632,6 +1634,373 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     });
   } catch (_err) {
     // no-op: facade is best-effort
+  }
+
+  // --- Dynamic UI Modal & Floating Badge Injection ---
+  let modalEl = null;
+
+  function closeSiriModal() {
+    if (modalEl && modalEl.parentNode) {
+      modalEl.parentNode.removeChild(modalEl);
+      modalEl = null;
+    }
+  }
+
+  async function openSiriModal() {
+    closeSiriModal();
+    const mask = document.createElement('div');
+    mask.className = 'siri-modal-mask';
+    mask.addEventListener('click', (e) => {
+      if (e.target === mask) closeSiriModal();
+    });
+
+    const status = await getPairStatus();
+    const connState = facade.connected;
+    const isCtrl = facade.wsState.controller || status.isController;
+    const isPaired = facade.wsState.paired || status.paired;
+    const acctOk = status.accountConfigured;
+
+    const savedToken = (typeof localStorage !== 'undefined' && localStorage.getItem('siri_http_token')) || '';
+
+    mask.innerHTML = `
+      <div class="siri-modal-dialog">
+        <div class="siri-dialog-header">
+          <div class="siri-dialog-title">🎙️ Siri 远程控制与设备配对</div>
+          <button class="siri-dialog-close" id="siri-close-btn">&times;</button>
+        </div>
+
+        <div class="siri-status-box">
+          <div class="siri-status-row">
+            <span>通信通道 (WS:8200)</span>
+            <span class="siri-tag ${connState ? 'siri-tag-ok' : 'siri-tag-warn'}">${connState ? '已连接' : '未连接'}</span>
+          </div>
+          <div class="siri-status-row">
+            <span>Siri 设备配对</span>
+            <span class="siri-tag ${isCtrl ? 'siri-tag-ok' : (isPaired ? 'siri-tag-blue' : 'siri-tag-gray')}">${isCtrl ? '已配对 (主控制端)' : (isPaired ? '已配对' : '未配对')}</span>
+          </div>
+          <div class="siri-status-row">
+            <span>服务器集中账号</span>
+            <span class="siri-tag ${acctOk ? 'siri-tag-ok' : 'siri-tag-warn'}">${acctOk ? '已就绪 (免登录)' : '未配置'}</span>
+          </div>
+        </div>
+
+        <div id="siri-modal-msg" style="display:none;"></div>
+
+        <div class="siri-card">
+          <div class="siri-card-label">🔑 设备配对 (SIRI_HTTP_TOKEN)</div>
+          <div class="siri-card-hint">输入服务端 .env 中的 SIRI_HTTP_TOKEN，一键将当前设备绑定为专属 Siri 语音点歌终端。</div>
+          <div class="siri-card-row">
+            <input type="password" id="siri-token-input" class="siri-input" placeholder="输入 SIRI_HTTP_TOKEN" value="${savedToken}" />
+            <button id="siri-pair-btn" class="siri-btn-primary">立即配对</button>
+          </div>
+        </div>
+
+        <div class="siri-card">
+          <div class="siri-card-label">☁️ 服务器统一账号 (免登录)</div>
+          <div class="siri-card-hint">所有设备共享同一账号，无需重复扫码。</div>
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <button id="siri-pull-session-btn" class="siri-btn-sec">⬇️ 从服务器拉取统一账号</button>
+            <button id="siri-push-session-btn" class="siri-btn-sec" style="background:#ecfdf5; border-color:#a7f3d0; color:#065f46;">⬆️ 将当前登录账号保存为服务器默认账号</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(mask);
+    modalEl = mask;
+
+    const showMsg = (text, type = 'info') => {
+      const msgBox = document.getElementById('siri-modal-msg');
+      if (msgBox) {
+        msgBox.style.display = 'block';
+        msgBox.className = `siri-msg siri-msg-${type === 'success' ? 'ok' : (type === 'error' ? 'err' : 'info')}`;
+        msgBox.textContent = text;
+      }
+    };
+
+    document.getElementById('siri-close-btn')?.addEventListener('click', closeSiriModal);
+
+    // Pair handler
+    document.getElementById('siri-pair-btn')?.addEventListener('click', async () => {
+      const tokenInput = document.getElementById('siri-token-input');
+      const token = tokenInput ? tokenInput.value.trim() : '';
+      if (!token) return showMsg('请输入 SIRI_HTTP_TOKEN', 'error');
+      showMsg('正在配对...', 'info');
+      try {
+        const res = await facade.pair(token);
+        if (res && res.ok) {
+          if (typeof localStorage !== 'undefined') localStorage.setItem('siri_http_token', token);
+          showMsg('🎉 配对成功！此设备已被授权并绑定为 Siri 控制终端。', 'success');
+        } else {
+          showMsg(`配对失败: ${res?.error || 'TOKEN 错误'}`, 'error');
+        }
+      } catch (err) {
+        showMsg(`异常: ${err.message || err}`, 'error');
+      }
+    });
+
+    // Pull session handler
+    document.getElementById('siri-pull-session-btn')?.addEventListener('click', async () => {
+      showMsg('正在从服务器拉取统一账号...', 'info');
+      try {
+        const res = await fetchDefaultSession();
+        if (res && res.ok && res.session) {
+          showMsg(`✅ 成功拉取服务器账号: ${res.session.nickname || res.session.userid || '酷狗用户'}！页面已刷新登录态。`, 'success');
+        } else {
+          showMsg('拉取失败，请确认服务器已配置账号。', 'error');
+        }
+      } catch (err) {
+        showMsg(`拉取异常: ${err.message || err}`, 'error');
+      }
+    });
+
+    // Push session handler
+    document.getElementById('siri-push-session-btn')?.addEventListener('click', async () => {
+      const storage = getStorage();
+      const data = readMoeData(storage);
+      const user = data && data.UserInfo;
+      if (!user || !user.token) return showMsg('当前设备尚未登录任何账号', 'error');
+      showMsg('正在保存当前账号到服务器...', 'info');
+      try {
+        const res = await fetch('/siri/save-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session: user })
+        });
+        const d = await res.json();
+        if (d && d.ok) {
+          showMsg('🎉 成功保存！当前账号已作为服务器全局统一账号，所有设备均可免登录直接使用。', 'success');
+        } else {
+          showMsg(`保存失败: ${d?.error || '服务器拒绝'}`, 'error');
+        }
+      } catch (err) {
+        showMsg(`异常: ${err.message || err}`, 'error');
+      }
+    });
+  }
+
+  function initSiriUI() {
+    if (typeof document === 'undefined') return;
+
+    const styleId = 'siri-control-ui-styles';
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
+        .siri-float-badge {
+          position: fixed;
+          bottom: 84px;
+          right: 20px;
+          z-index: 9999;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          background: rgba(255, 255, 255, 0.92);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border: 1px solid rgba(0, 0, 0, 0.08);
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+          padding: 6px 12px;
+          border-radius: 20px;
+          cursor: pointer;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          font-size: 12px;
+          color: #334155;
+          transition: all 0.2s ease;
+          user-select: none;
+        }
+        .siri-float-badge:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+          background: #ffffff;
+        }
+        .siri-badge-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #94a3b8;
+        }
+        .siri-badge-dot.online { background: #10b981; }
+        .siri-badge-dot.controller { background: #3b82f6; }
+        .siri-badge-dot.offline { background: #ef4444; }
+
+        .siri-modal-mask {
+          position: fixed;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(0, 0, 0, 0.45);
+          backdrop-filter: blur(4px);
+          -webkit-backdrop-filter: blur(4px);
+          z-index: 10000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 16px;
+          animation: siriFadeIn 0.2s ease;
+        }
+        @keyframes siriFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .siri-modal-dialog {
+          background: #ffffff;
+          border-radius: 16px;
+          max-width: 460px;
+          width: 100%;
+          box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+          padding: 22px;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          color: #1e293b;
+          box-sizing: border-box;
+        }
+        .siri-dialog-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 16px;
+          border-bottom: 1px solid #f1f5f9;
+          padding-bottom: 12px;
+        }
+        .siri-dialog-title {
+          font-size: 16px;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .siri-dialog-close {
+          background: none;
+          border: none;
+          font-size: 22px;
+          cursor: pointer;
+          color: #94a3b8;
+          padding: 0 4px;
+        }
+        .siri-dialog-close:hover { color: #1e293b; }
+        .siri-status-box {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: 10px 14px;
+          margin-bottom: 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          font-size: 13px;
+        }
+        .siri-status-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .siri-tag {
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 10px;
+          font-weight: 600;
+        }
+        .siri-tag-ok { background: #dcfce7; color: #15803d; }
+        .siri-tag-blue { background: #dbeafe; color: #1d4ed8; }
+        .siri-tag-warn { background: #fef3c7; color: #b45309; }
+        .siri-tag-gray { background: #f1f5f9; color: #64748b; }
+
+        .siri-card {
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: 12px;
+          margin-bottom: 12px;
+        }
+        .siri-card-label {
+          font-size: 13px;
+          font-weight: 600;
+          margin-bottom: 4px;
+        }
+        .siri-card-hint {
+          font-size: 11px;
+          color: #64748b;
+          margin-bottom: 8px;
+          line-height: 1.4;
+        }
+        .siri-card-row {
+          display: flex;
+          gap: 8px;
+        }
+        .siri-input {
+          flex: 1;
+          padding: 7px 10px;
+          border: 1px solid #cbd5e1;
+          border-radius: 6px;
+          font-size: 12px;
+          outline: none;
+        }
+        .siri-btn-primary {
+          background: #2563eb;
+          color: #fff;
+          border: none;
+          border-radius: 6px;
+          padding: 7px 14px;
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+        .siri-btn-primary:hover { background: #1d4ed8; }
+        .siri-btn-sec {
+          background: #f1f5f9;
+          color: #334155;
+          border: 1px solid #cbd5e1;
+          border-radius: 6px;
+          padding: 8px 12px;
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          width: 100%;
+          text-align: center;
+          box-sizing: border-box;
+          transition: all 0.15s ease;
+        }
+        .siri-btn-sec:hover { background: #e2e8f0; }
+        .siri-msg {
+          padding: 8px 12px;
+          border-radius: 6px;
+          font-size: 12px;
+          margin-bottom: 10px;
+          word-break: break-all;
+        }
+        .siri-msg-ok { background: #dcfce7; color: #166534; }
+        .siri-msg-err { background: #fee2e2; color: #991b1b; }
+        .siri-msg-info { background: #e0f2fe; color: #0369a1; }
+      `;
+      document.head.appendChild(style);
+    }
+
+    let badge = document.getElementById('siri-control-badge');
+    if (!badge && document.body) {
+      badge = document.createElement('div');
+      badge.id = 'siri-control-badge';
+      badge.className = 'siri-float-badge';
+      badge.innerHTML = `<span class="siri-badge-dot" id="siri-badge-dot"></span><span>Siri 控制</span>`;
+      badge.addEventListener('click', openSiriModal);
+      document.body.appendChild(badge);
+    }
+
+    function updateBadge() {
+      const dot = document.getElementById('siri-badge-dot');
+      if (!dot) return;
+      if (facade.connected) {
+        dot.className = facade.wsState.controller ? 'siri-badge-dot controller' : 'siri-badge-dot online';
+      } else {
+        dot.className = 'siri-badge-dot offline';
+      }
+    }
+
+    setInterval(updateBadge, 2500);
+    updateBadge();
+  }
+
+  // Mount UI when DOM ready
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initSiriUI);
+    } else {
+      setTimeout(initSiriUI, 500);
+    }
   }
 
   // Auto-sync default server session if user is not logged in on this client

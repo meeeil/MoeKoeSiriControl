@@ -135,7 +135,7 @@ if (Test-PortListening $apiPort) {
     Write-Host "[start-all] API already listening on :$apiPort - skip"
 } else {
     Write-Host "[start-all] Starting API on 127.0.0.1:$apiPort ..."
-    Start-DetachedProcess 'api' $moekoeDir "`"$nodeExe`" api/app.js --platform=lite --port=$apiPort" `
+    Start-DetachedProcess 'api' $moekoeDir "`"$nodeExe`" -r `"$root\server\api-preload.cjs`" api/app.js --platform=lite --port=$apiPort" `
         "$root\run\api.log" "$root\run\api.err.log" @('set HOST=127.0.0.1')
 }
 

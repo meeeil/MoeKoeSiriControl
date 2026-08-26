@@ -46,6 +46,7 @@ if (controller.deviceId) {
 const sessionAuth = createSessionAuth({
   username: config.KUGOU_USERNAME,
   password: config.KUGOU_PASSWORD,
+  sessionFilePath: path.join(config.projectRoot, 'run', 'session.json'),
   log: (...args) => console.log('[session-auth]', ...args)
 });
 

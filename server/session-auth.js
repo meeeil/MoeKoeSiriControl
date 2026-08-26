@@ -74,7 +74,7 @@ export function createSessionAuth({
   username,
   password,
   apiBase = config.MOEKOE_API_URL,
-  sessionFilePath = path.join(config.projectRoot, 'run', 'session.json'),
+  sessionFilePath = null,
   timeoutMs = 15000,
   cooldownMs = 60000,
   budget = 5,
