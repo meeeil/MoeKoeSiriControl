@@ -88,6 +88,15 @@ const controlServer = createControlServer({
   }
 });
 
+webServer.on('upgrade', (req, socket, head) => {
+  const url = req.url || '';
+  if (url === config.WS_PATH || url.startsWith(config.WS_PATH + '?') || url.startsWith(config.WS_PATH + '/')) {
+    controlServer.wss.handleUpgrade(req, socket, head, (ws) => {
+      controlServer.wss.emit('connection', ws, req);
+    });
+  }
+});
+
 controlServer.app.use(
   createHttpApi({
     sendPlayRequest: controlServer.sendPlayRequest,

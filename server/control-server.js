@@ -163,11 +163,29 @@ export function createControlServer(overrides = {}) {
     }
   }
 
+  function isOriginAllowed(origin) {
+    if (!origin) return true;
+    if (allowedOrigins.has(origin)) return true;
+    if (allowedOrigins.has('*')) return true;
+    try {
+      const parsed = new URL(origin);
+      const host = parsed.hostname;
+      if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
+      if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+      if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+      if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+      if (host.endsWith('.local') || host.endsWith('.lan')) return true;
+    } catch (_e) {
+      // ignore
+    }
+    return false;
+  }
+
   wss.on('connection', (socket, req) => {
     const remote = req.socket.remoteAddress || 'unknown';
     const origin = req.headers.origin;
 
-    if (origin && !allowedOrigins.has(origin)) {
+    if (origin && !isOriginAllowed(origin)) {
       console.log(`[control] reject ws origin ${origin} (${remote})`);
       socket.close(1008, 'origin not allowed');
       return;
