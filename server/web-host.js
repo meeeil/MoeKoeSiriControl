@@ -6,13 +6,14 @@ import config from './config.js';
 import { safeTokenEqual } from './protocol.js';
 import {
   makePairCookieValue,
+  parsePairCookie,
   createPairingLimiter,
   PAIR_COOKIE
 } from './pairing.js';
 
 const HASHED_ASSET_RE = /[-.][A-Za-z0-9_-]{8,}\.(?:js|css|png|jpe?g|gif|svg|webp|woff2?|ico)$/i;
 
-export function createWebHost({ controllerStore } = {}) {
+export function createWebHost({ controllerStore, sessionAuth } = {}) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -48,6 +49,59 @@ export function createWebHost({ controllerStore } = {}) {
   app.get('/siri/pair', (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.sendFile(path.join(config.projectRoot, 'server', 'pair-page.html'));
+  });
+
+  app.get('/siri/pair-status', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const cookieHeader = req.headers.cookie || '';
+    const parsed = parsePairCookie(cookieHeader, config.SIRI_HTTP_TOKEN);
+    const controller = controllerStore ? controllerStore.get() : { deviceId: null };
+    const paired = parsed !== null;
+    const isController = paired && controller.deviceId && controller.deviceId === parsed.deviceId;
+    return res.json({
+      ok: true,
+      paired,
+      isController,
+      deviceId: parsed ? parsed.deviceId : null,
+      accountConfigured: sessionAuth ? sessionAuth.isConfigured() : false
+    });
+  });
+
+  app.get('/siri/default-session', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!sessionAuth || !sessionAuth.isConfigured()) {
+      return res.status(200).json({ ok: false, code: 'NOT_CONFIGURED' });
+    }
+    const result = await sessionAuth.getSession();
+    if (result.ok) {
+      return res.status(200).json({ ok: true, session: result.session });
+    }
+    return res.status(200).json({ ok: false, code: result.code, detail: result.detail });
+  });
+
+  app.post('/siri/sync-session', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!sessionAuth || !sessionAuth.isConfigured()) {
+      return res.status(200).json({ ok: false, code: 'NOT_CONFIGURED' });
+    }
+    const result = await sessionAuth.login();
+    if (result.ok) {
+      return res.status(200).json({ ok: true, session: result.session });
+    }
+    return res.status(200).json({ ok: false, code: result.code, detail: result.detail });
+  });
+
+  app.post('/siri/save-session', express.json(), (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const session = req.body && req.body.session ? req.body.session : req.body;
+    if (!session || typeof session.token !== 'string' || session.token.length === 0) {
+      return res.status(400).json({ ok: false, error: 'INVALID_SESSION' });
+    }
+    if (sessionAuth && typeof sessionAuth.saveSession === 'function') {
+      const saved = sessionAuth.saveSession(session);
+      return res.json({ ok: saved, session: sessionAuth.getCachedSession() });
+    }
+    return res.status(500).json({ ok: false, error: 'NO_SESSION_AUTH' });
   });
 
   app.post('/siri/pair', express.json(), (req, res) => {

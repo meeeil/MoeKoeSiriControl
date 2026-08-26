@@ -37,6 +37,8 @@
  *   BUDGET_EXCEEDED      the hourly upstream-login budget is exhausted
  */
 import config from './config.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export const SESSION_AUTH_ERRORS = Object.freeze([
   'PAIR_REQUIRED',
@@ -58,6 +60,7 @@ function nonEmpty(value) {
  * @param {object} opts
  * @param {string} [opts.username]      KuGou account
  * @param {string} [opts.password]      KuGou password
+ * @param {string} [opts.sessionFilePath] file path to persist session
  * @param {string} [opts.apiBase]       MoeKoeMusic API base (default config)
  * @param {number} [opts.timeoutMs]      login timeout (default 15000)
  * @param {number} [opts.cooldownMs]     transient-failure cooldown (default 60000)
@@ -71,6 +74,7 @@ export function createSessionAuth({
   username,
   password,
   apiBase = config.MOEKOE_API_URL,
+  sessionFilePath = path.join(config.projectRoot, 'run', 'session.json'),
   timeoutMs = 15000,
   cooldownMs = 60000,
   budget = 5,
@@ -83,10 +87,48 @@ export function createSessionAuth({
   let state = 'ready';
   let cooldownUntil = 0;
   let lastFailure = null;
+  let cachedSession = null;
   const attempts = []; // timestamps of real upstream logins
 
+  if (sessionFilePath && fs.existsSync(sessionFilePath)) {
+    try {
+      const raw = fs.readFileSync(sessionFilePath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.token === 'string' && parsed.token.length > 0) {
+        cachedSession = parsed;
+        log('session-auth: loaded persisted server session');
+      }
+    } catch (_err) {
+      log('session-auth: failed to read session.json');
+    }
+  }
+
+  function saveSession(session) {
+    if (!session || typeof session.token !== 'string' || session.token.length === 0) return false;
+    cachedSession = {
+      token: String(session.token),
+      t1: session.t1 ? String(session.t1) : '',
+      userid: session.userid != null ? String(session.userid) : '',
+      nickname: session.nickname ? String(session.nickname) : '酷狗用户',
+      pic: session.pic ? String(session.pic) : './assets/images/profile.jpg',
+      vip_type: session.vip_type != null ? Number(session.vip_type) : 0,
+      vip_token: session.vip_token ? String(session.vip_token) : ''
+    };
+    if (sessionFilePath) {
+      try {
+        const dir = path.dirname(sessionFilePath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(sessionFilePath, JSON.stringify(cachedSession, null, 2), 'utf8');
+        log('session-auth: saved server session');
+      } catch (err) {
+        log('session-auth: failed to write session.json', err.message);
+      }
+    }
+    return true;
+  }
+
   function isConfigured() {
-    return nonEmpty(username) && nonEmpty(password);
+    return (cachedSession && nonEmpty(cachedSession.token)) || (nonEmpty(username) && nonEmpty(password));
   }
 
   function pruneAttempts(now) {
@@ -188,9 +230,13 @@ export function createSessionAuth({
         token: String(d.token),
         t1: nonEmpty(d.t1) ? String(d.t1) : '',
         userid: d.userid != null ? String(d.userid) : '',
+        nickname: nonEmpty(d.nickname) ? String(d.nickname) : (nonEmpty(device.nickname) ? device.nickname : '酷狗用户'),
+        pic: nonEmpty(d.pic) ? String(d.pic) : (nonEmpty(device.pic) ? device.pic : './assets/images/profile.jpg'),
         vip_type: d.vip_type != null ? Number(d.vip_type) : 0,
         vip_token: nonEmpty(d.vip_token) ? String(d.vip_token) : ''
       };
+
+      cachedSession = session;
       clearState(getNow());
       log('session-auth: login ok in', getNow() - startedAt, 'ms');
       return { ok: true, session };
@@ -244,5 +290,16 @@ export function createSessionAuth({
     };
   }
 
-  return { login, reset, isConfigured, status };
+  function getCachedSession() {
+    return cachedSession;
+  }
+
+  function getSession(device = {}) {
+    if (cachedSession && nonEmpty(cachedSession.token)) {
+      return Promise.resolve({ ok: true, session: cachedSession });
+    }
+    return login(device);
+  }
+
+  return { login, getSession, getCachedSession, saveSession, reset, isConfigured, status };
 }

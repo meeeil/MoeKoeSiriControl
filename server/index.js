@@ -43,7 +43,13 @@ if (controller.deviceId) {
   console.log(`[index] no controller paired yet — open http://<host>:${config.WEB_PORT}/siri/pair on the target iPad${controller.corrupt ? ' (controller.json corrupt)' : ''}`);
 }
 
-const webApp = createWebHost({ controllerStore });
+const sessionAuth = createSessionAuth({
+  username: config.KUGOU_USERNAME,
+  password: config.KUGOU_PASSWORD,
+  log: (...args) => console.log('[session-auth]', ...args)
+});
+
+const webApp = createWebHost({ controllerStore, sessionAuth });
 const webServer = webApp.listen(config.WEB_PORT, config.WEB_HOST, () => {
   console.log(`[index] web host: http://${config.WEB_HOST}:${config.WEB_PORT} (serving ${config.MOEKOE_DIST_DIR})`);
   console.log(`[index] api proxy: ${config.MOEKOE_API_URL}`);
@@ -53,12 +59,6 @@ const pending = createPendingCoordinator();
 
 const offlineCommand = createOfflineCommand({
   log: (...args) => console.log('[offline]', ...args)
-});
-
-const sessionAuth = createSessionAuth({
-  username: config.KUGOU_USERNAME,
-  password: config.KUGOU_PASSWORD,
-  log: (...args) => console.log('[session-auth]', ...args)
 });
 
 const controlServer = createControlServer({

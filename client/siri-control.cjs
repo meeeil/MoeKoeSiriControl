@@ -705,13 +705,73 @@ function mergeSessionIntoMoeData(session, deps = {}) {
     ...UserInfo,
     token: String(session.token),
     t1: nonEmpty(session.t1) ? String(session.t1) : UserInfo.t1,
-    userid: session.userid != null ? String(session.userid) : UserInfo.userid
+    userid: session.userid != null ? String(session.userid) : UserInfo.userid,
+    nickname: nonEmpty(session.nickname) ? String(session.nickname) : (UserInfo.nickname || '酷狗用户'),
+    pic: nonEmpty(session.pic) ? String(session.pic) : (UserInfo.pic || './assets/images/profile.jpg')
   };
   if (session.vip_type != null) updated.vip_type = session.vip_type;
   if (nonEmpty(session.vip_token)) updated.vip_token = String(session.vip_token);
   writeMoeData({ ...data, UserInfo: updated }, storage);
   syncMoeUserInfo(updated);
   return updated;
+}
+
+async function fetchDefaultSession(deps = {}) {
+  const fetcher = deps.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+  if (!fetcher) return { ok: false, code: 'NO_FETCH' };
+  try {
+    const res = await fetcher('/siri/default-session', {
+      method: 'GET',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (res.status !== 200) {
+      return { ok: false, code: 'HTTP_ERROR', detail: 'http=' + res.status };
+    }
+    const data = await res.json();
+    if (data && data.ok === true && data.session) {
+      const updated = mergeSessionIntoMoeData(data.session, deps);
+      return { ok: true, session: updated };
+    }
+    return { ok: false, code: (data && data.code) || 'NO_DEFAULT_SESSION', detail: data && data.detail };
+  } catch (err) {
+    return { ok: false, code: 'NETWORK_ERROR', detail: String((err && err.message) || err) };
+  }
+}
+
+async function pairDevice(token, deps = {}) {
+  const fetcher = deps.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+  if (!fetcher) return { ok: false, error: 'NO_FETCH' };
+  try {
+    const res = await fetcher('/siri/pair', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: String(token || '').trim() })
+    });
+    const data = await res.json();
+    if (res.ok && data && data.ok) {
+      return { ok: true, deviceId: data.deviceId };
+    }
+    return { ok: false, error: (data && data.error) || ('HTTP ' + res.status) };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+}
+
+async function getPairStatus(deps = {}) {
+  const fetcher = deps.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+  if (!fetcher) return { ok: false, error: 'NO_FETCH' };
+  try {
+    const res = await fetcher('/siri/pair-status', {
+      method: 'GET',
+      credentials: 'include'
+    });
+    const data = await res.json();
+    return data;
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
 }
 
 /**
@@ -1281,6 +1341,9 @@ const api = {
   readDeviceFromMoeData,
   mergeSessionIntoMoeData,
   refreshLoginSession,
+  fetchDefaultSession,
+  pairDevice,
+  getPairStatus,
   createSessionRecoverer,
   createRecoverySearch,
   createCommandHandler,
@@ -1533,6 +1596,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           ? { ok: true }
           : { ok: false, code: result && result.code ? result.code : 'UPSTREAM_UNAVAILABLE' }
       ),
+    fetchDefaultSession: () => fetchDefaultSession(),
+    pair: (token) => pairDevice(token).then((res) => {
+      if (res && res.ok && ws) ws.reconnect();
+      return res;
+    }),
+    getPairStatus: () => getPairStatus(),
     snapshot: () => ({
       version: BUILD.VERSION,
       connected: facade.connected,
@@ -1564,6 +1633,24 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   } catch (_err) {
     // no-op: facade is best-effort
   }
+
+  // Auto-sync default server session if user is not logged in on this client
+  setTimeout(async () => {
+    try {
+      const storage = getStorage();
+      const data = readMoeData(storage);
+      const hasToken = data && data.UserInfo && nonEmpty(data.UserInfo.token);
+      if (!hasToken) {
+        log('no local user session, fetching server default session...');
+        const r = await fetchDefaultSession();
+        if (r && r.ok) {
+          log('server default session applied successfully');
+        }
+      }
+    } catch (_err) {
+      // best-effort
+    }
+  }, 1000);
 
   log('loaded v' + BUILD.VERSION, 'protocol', PROTOCOL_VERSION);
 }

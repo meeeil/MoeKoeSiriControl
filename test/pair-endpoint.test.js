@@ -87,3 +87,20 @@ test('POST /siri/pair is rate limited to 5 per IP per minute', async () => {
   assert.equal(body.error, 'RATE_LIMITED');
   await new Promise((resolve) => limiterServer.close(resolve));
 });
+
+test('GET /siri/pair-status returns paired state and account info', async () => {
+  const res = await fetch(`${baseUrl}/siri/pair-status`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(typeof body.paired, 'boolean');
+  assert.equal(typeof body.isController, 'boolean');
+});
+
+test('GET /siri/default-session returns NOT_CONFIGURED when no sessionAuth', async () => {
+  const res = await fetch(`${baseUrl}/siri/default-session`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.ok, false);
+  assert.equal(body.code, 'NOT_CONFIGURED');
+});
