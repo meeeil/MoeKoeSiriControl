@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import config from './config.js';
 import { safeTokenEqual } from './protocol.js';
+import { Readable } from 'node:stream';
 import {
   makePairCookieValue,
   parsePairCookie,
@@ -89,6 +90,46 @@ export function createWebHost({
       return res.sendFile(path.join(config.projectRoot, 'server', 'gate-page.html'));
     }
     return res.status(401).json({ ok: false, error: 'GATE_LOCKED' });
+  });
+
+  // 4. Audio Proxy Endpoint (for CORS & Mixed Content bypass on HTTPS)
+  app.get('/api/audio-proxy', async (req, res) => {
+    const targetUrl = typeof req.query.url === 'string' ? req.query.url : '';
+    if (!targetUrl || (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://'))) {
+      return res.status(400).send('Invalid url parameter');
+    }
+
+    const range = req.headers.range;
+    const upstreamHeaders = {
+      'User-Agent': 'Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi',
+      'Referer': 'http://kugou.com/'
+    };
+    if (range) {
+      upstreamHeaders['Range'] = range;
+    }
+
+    try {
+      const upstreamRes = await fetch(targetUrl, {
+        headers: upstreamHeaders
+      });
+
+      res.status(upstreamRes.status);
+      for (const [k, v] of upstreamRes.headers.entries()) {
+        if (['content-type', 'content-length', 'content-range', 'accept-ranges'].includes(k.toLowerCase())) {
+          res.setHeader(k, v);
+        }
+      }
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Headers', '*');
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+
+      if (!upstreamRes.body) return res.end();
+      Readable.fromWeb(upstreamRes.body).pipe(res);
+    } catch (err) {
+      console.error(`[web-host] audio proxy error: ${err.message}`);
+      if (!res.headersSent) res.status(502).send('Audio proxy error');
+    }
   });
 
   app.use(
