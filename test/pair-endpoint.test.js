@@ -46,6 +46,29 @@ test('POST /siri/pair with correct token sets a device-scoped HMAC cookie', asyn
   assert.equal(verifyPairCookie(`${PAIR_COOKIE}=${value}`, config.SIRI_HTTP_TOKEN), true);
 });
 
+test('POST /siri/pair marks the cookie Secure behind an HTTPS reverse proxy', async () => {
+  const secureApp = createWebHost({ trustProxy: 1 });
+  let secureServer;
+  await new Promise((resolve) => {
+    secureServer = secureApp.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    const url = `http://127.0.0.1:${secureServer.address().port}`;
+    const res = await fetch(`${url}/siri/pair`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Forwarded-Proto': 'https'
+      },
+      body: JSON.stringify({ token: config.SIRI_HTTP_TOKEN })
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('set-cookie') || '', /; Secure;/i);
+  } finally {
+    await new Promise((resolve) => secureServer.close(resolve));
+  }
+});
+
 test('POST /siri/pair with wrong/missing token -> 401', async () => {
   const wrong = await fetch(`${baseUrl}/siri/pair`, {
     method: 'POST',

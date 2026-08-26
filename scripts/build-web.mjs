@@ -15,11 +15,14 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, cpSync
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
+import { readEnvOrFile } from '../server/env-source.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '..');
 
 dotenv.config({ path: path.join(projectRoot, '.env') });
+
+const containerBuild = /^(?:1|true)$/i.test(String(process.env.CONTAINER_BUILD || ''));
 
 function fail(message) {
   console.error(`[build-web] ${message}`);
@@ -27,7 +30,7 @@ function fail(message) {
 }
 
 function requireEnv(name, minLength = 0) {
-  const value = String(process.env[name] || '');
+  const value = String(readEnvOrFile(name));
   if (value.length < minLength) {
     fail(`missing or too short ${name} in .env (need >= ${minLength} chars)`);
   }
@@ -36,10 +39,12 @@ function requireEnv(name, minLength = 0) {
 
 // 1. validate
 const moekoeDir = path.resolve(requireEnv('MOEKOE_DIR'));
-const httpToken = requireEnv('SIRI_HTTP_TOKEN', 32);
 const wsToken = requireEnv('SIRI_WS_TOKEN', 32);
-if (httpToken === wsToken) {
-  fail('SIRI_HTTP_TOKEN and SIRI_WS_TOKEN must be different');
+if (!containerBuild) {
+  const httpToken = requireEnv('SIRI_HTTP_TOKEN', 32);
+  if (httpToken === wsToken) {
+    fail('SIRI_HTTP_TOKEN and SIRI_WS_TOKEN must be different');
+  }
 }
 if (!existsSync(path.join(moekoeDir, 'package.json'))) {
   fail(`MOEKOE_DIR does not contain package.json: ${moekoeDir}`);
@@ -48,19 +53,21 @@ if (!existsSync(path.join(moekoeDir, 'node_modules', 'vite'))) {
   fail('MoeKoeMusic node_modules is missing (run npm install there first)');
 }
 
-// 2. git clean check
-const gitCheck = spawnSync('git', ['status', '--short'], {
-  cwd: moekoeDir,
-  encoding: 'utf8'
-});
-if (gitCheck.status !== 0) {
-  fail('failed to run git status in MoeKoeMusic');
-}
-const dirty = (gitCheck.stdout || '').trim();
-if (dirty) {
-  console.error('[build-web] MoeKoeMusic working tree is not clean:');
-  console.error(dirty);
-  fail('aborting build to avoid generating un-tracked source changes');
+if (!containerBuild) {
+  // 2. git clean check (local builds only; Docker contexts intentionally omit .git)
+  const gitCheck = spawnSync('git', ['status', '--short'], {
+    cwd: moekoeDir,
+    encoding: 'utf8'
+  });
+  if (gitCheck.status !== 0) {
+    fail('failed to run git status in MoeKoeMusic');
+  }
+  const dirty = (gitCheck.stdout || '').trim();
+  if (dirty) {
+    console.error('[build-web] MoeKoeMusic working tree is not clean:');
+    console.error(dirty);
+    fail('aborting build to avoid generating un-tracked source changes');
+  }
 }
 
 // 2b. snapshot the current dist before replacing it (rollback source)
@@ -70,7 +77,7 @@ const distDir = path.resolve(
 const backupsDir = path.join(projectRoot, 'backups');
 const prevDir = path.join(backupsDir, 'dist.prev');
 const prevOldDir = path.join(backupsDir, 'dist.prev.old');
-if (existsSync(distDir) && readdirSync(distDir).length > 0) {
+if (!containerBuild && existsSync(distDir) && readdirSync(distDir).length > 0) {
   mkdirSync(backupsDir, { recursive: true });
   if (existsSync(prevDir)) {
     rmSync(prevOldDir, { recursive: true, force: true });

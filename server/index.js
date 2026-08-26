@@ -33,7 +33,7 @@ async function checkUpstream() {
 let upstreamState = { reachable: null, status: null, checkedAt: 0 };
 
 const controllerStore = createControllerStore({
-  filePath: path.join(config.projectRoot, 'run', 'controller.json'),
+  filePath: path.join(config.RUN_DIR, 'controller.json'),
   log: (...args) => console.log('[controller]', ...args)
 });
 const controller = controllerStore.get();
@@ -46,7 +46,7 @@ if (controller.deviceId) {
 const sessionAuth = createSessionAuth({
   username: config.KUGOU_USERNAME,
   password: config.KUGOU_PASSWORD,
-  sessionFilePath: path.join(config.projectRoot, 'run', 'session.json'),
+  sessionFilePath: path.join(config.RUN_DIR, 'session.json'),
   log: (...args) => console.log('[session-auth]', ...args)
 });
 

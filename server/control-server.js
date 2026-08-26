@@ -27,6 +27,8 @@
  */
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import config from './config.js';
@@ -68,6 +70,20 @@ export function createControlServer(overrides = {}) {
 
   const app = express();
   app.disable('x-powered-by');
+  app.get('/livez', (_req, res) => {
+    res.json({ ok: true, status: 'live' });
+  });
+  app.get('/readyz', (_req, res) => {
+    const up = typeof upstream.get === 'function' ? upstream.get() : null;
+    const distReady = fs.existsSync(path.join(config.MOEKOE_DIST_DIR, 'index.html'));
+    const upstreamReady = !!(up && up.reachable === true);
+    const ready = distReady && upstreamReady;
+    res.status(ready ? 200 : 503).json({
+      ok: ready,
+      status: ready ? 'ready' : 'not_ready',
+      checks: { dist: distReady, upstream: upstreamReady }
+    });
+  });
   app.get('/health', (_req, res) => {
     const controller = controllerStore.get();
     const up = typeof upstream.get === 'function' ? upstream.get() : null;

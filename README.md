@@ -380,6 +380,18 @@ build-web.mjs
 
 三者在 `npm run start:all` 中一并启动。
 
+### Docker / reverse-proxy configuration
+
+The standalone Windows workflow remains the default. Container deployments may
+set only `MOEKOE_DIST_DIR` (the full `MOEKOE_DIR` source tree is not required),
+move persistent state with `RUN_DIR`, and provide sensitive values through
+`SIRI_HTTP_TOKEN_FILE`, `SIRI_WS_TOKEN_FILE`, and `KUGOU_PASSWORD_FILE`.
+Set `TRUST_PROXY=1` only when the gateway is reachable through exactly one
+trusted reverse proxy; direct LAN deployments must keep the default `0`.
+
+Container liveness is exposed internally at `/livez`; `/readyz` returns 200
+only after the WebUI dist exists and the KuGou API has become reachable.
+
 Windows 防火墙需放行 8080、8200 入站（iPad 才能访问 `192.168.10.236:8080`、
 `ws://192.168.10.236:8200/ws` 与 `http://192.168.10.236:8200/api/siri/play`）。
 

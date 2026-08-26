@@ -101,6 +101,39 @@ test('health endpoint responds ok with controller state', async () => {
   assert.equal(typeof body.controller.online, 'boolean');
 });
 
+test('livez is live while readyz waits for the upstream API', async () => {
+  const live = await fetch(`${httpUrl}/livez`);
+  assert.equal(live.status, 200);
+  assert.deepEqual(await live.json(), { ok: true, status: 'live' });
+
+  const notReady = await fetch(`${httpUrl}/readyz`);
+  assert.equal(notReady.status, 503);
+  const body = await notReady.json();
+  assert.equal(body.ok, false);
+  assert.equal(body.checks.dist, true);
+  assert.equal(body.checks.upstream, false);
+});
+
+test('readyz returns 200 when dist and upstream are ready', async () => {
+  const readyServer = createControlServer({
+    heartbeatIntervalMs: 60000,
+    pongTimeoutMs: 60000,
+    upstream: { get: () => ({ reachable: true }), url: 'http://kugou-api:6521' }
+  });
+  await new Promise((resolve) => readyServer.httpServer.listen(0, '127.0.0.1', resolve));
+  try {
+    const res = await fetch(`http://127.0.0.1:${readyServer.httpServer.address().port}/readyz`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), {
+      ok: true,
+      status: 'ready',
+      checks: { dist: true, upstream: true }
+    });
+  } finally {
+    await readyServer.close();
+  }
+});
+
 test('health reports upstream + sessionAuth when provided', async () => {
   const store = createControllerStore({ filePath: null });
   store.set(CONTROLLER_DEVICE_ID);

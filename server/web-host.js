@@ -13,9 +13,16 @@ import {
 
 const HASHED_ASSET_RE = /[-.][A-Za-z0-9_-]{8,}\.(?:js|css|png|jpe?g|gif|svg|webp|woff2?|ico)$/i;
 
-export function createWebHost({ controllerStore, sessionAuth } = {}) {
+export function createWebHost({
+  controllerStore,
+  sessionAuth,
+  trustProxy = config.TRUST_PROXY
+} = {}) {
   const app = express();
   app.disable('x-powered-by');
+  // Docker sets this to one trusted hop (Caddy); direct Windows/LAN mode keeps
+  // it disabled so clients cannot spoof X-Forwarded-* for rate limiting.
+  if (trustProxy) app.set('trust proxy', trustProxy);
 
   app.use((req, res, next) => {
     const start = Date.now();
@@ -117,9 +124,10 @@ export function createWebHost({ controllerStore, sessionAuth } = {}) {
     if (controllerStore && typeof controllerStore.set === 'function') {
       controllerStore.set(deviceId);
     }
+    const secure = req.secure;
     res.setHeader(
       'Set-Cookie',
-      `${PAIR_COOKIE}=${makePairCookieValue(config.SIRI_HTTP_TOKEN, deviceId)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000`
+      `${PAIR_COOKIE}=${makePairCookieValue(config.SIRI_HTTP_TOKEN, deviceId)}; HttpOnly${secure ? '; Secure' : ''}; SameSite=Strict; Path=/; Max-Age=31536000`
     );
     return res.json({ ok: true, deviceId });
   });

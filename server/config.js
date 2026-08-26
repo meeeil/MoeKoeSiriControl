@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { readEnvOrFile } from './env-source.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '..');
@@ -21,7 +22,7 @@ function int(name, { min, max, def }) {
 }
 
 function token(name) {
-  const value = String(process.env[name] || '');
+  const value = String(readEnvOrFile(name));
   if (value.length < 32) fail(`${name} must be >= 32 bytes (got ${value.length})`);
   return value;
 }
@@ -33,13 +34,28 @@ const CONTROL_PORT = int('CONTROL_PORT', { min: 1, max: 65535, def: 8200 });
 
 if (WEB_PORT === CONTROL_PORT) fail('WEB_PORT and CONTROL_PORT must differ');
 
-const MOEKOE_DIR = path.resolve(process.env.MOEKOE_DIR || '');
-if (!MOEKOE_DIR || !fs.existsSync(MOEKOE_DIR)) fail(`MOEKOE_DIR does not exist: ${MOEKOE_DIR}`);
+const moekoeDirRaw = String(process.env.MOEKOE_DIR || '').trim();
+const MOEKOE_DIR = moekoeDirRaw ? path.resolve(moekoeDirRaw) : null;
+if (MOEKOE_DIR && !fs.existsSync(MOEKOE_DIR)) {
+  fail(`MOEKOE_DIR does not exist: ${MOEKOE_DIR}`);
+}
 
-const MOEKOE_DIST_DIR = path.resolve(
-  process.env.MOEKOE_DIST_DIR || path.join(MOEKOE_DIR, 'dist')
-);
-if (!fs.existsSync(MOEKOE_DIST_DIR)) fail(`MOEKOE_DIST_DIR does not exist: ${MOEKOE_DIST_DIR}`);
+const moekoeDistRaw = process.env.MOEKOE_DIST_DIR ||
+  (MOEKOE_DIR ? path.join(MOEKOE_DIR, 'dist') : '');
+if (!moekoeDistRaw) {
+  fail('MOEKOE_DIST_DIR is required when MOEKOE_DIR is not set');
+}
+const MOEKOE_DIST_DIR = path.resolve(moekoeDistRaw);
+if (!fs.existsSync(MOEKOE_DIST_DIR)) {
+  fail(`MOEKOE_DIST_DIR does not exist: ${MOEKOE_DIST_DIR}`);
+}
+
+const RUN_DIR = path.resolve(process.env.RUN_DIR || path.join(projectRoot, 'run'));
+const trustProxyRaw = String(process.env.TRUST_PROXY || '').trim().toLowerCase();
+if (trustProxyRaw && !['1', 'true', '0', 'false'].includes(trustProxyRaw)) {
+  fail('TRUST_PROXY must be 1/true or 0/false');
+}
+const TRUST_PROXY = trustProxyRaw === '1' || trustProxyRaw === 'true' ? 1 : false;
 
 const MOEKOE_API_URL = String(process.env.MOEKOE_API_URL || 'http://127.0.0.1:6521');
 if (!/^https?:\/\//.test(MOEKOE_API_URL)) fail(`MOEKOE_API_URL must start with http(s)://`);
@@ -60,8 +76,8 @@ if (SIRI_HTTP_TOKEN === SIRI_WS_TOKEN) fail('SIRI_HTTP_TOKEN and SIRI_WS_TOKEN m
 
 // Optional: KuGou account used by session recovery (Phase 5.6). If missing,
 // reauth returns NOT_CONFIGURED and the feature stays dormant.
-const KUGOU_USERNAME = String(process.env.KUGOU_USERNAME || '');
-const KUGOU_PASSWORD = String(process.env.KUGOU_PASSWORD || '');
+const KUGOU_USERNAME = String(readEnvOrFile('KUGOU_USERNAME'));
+const KUGOU_PASSWORD = String(readEnvOrFile('KUGOU_PASSWORD'));
 
 const LIMITS = {
   PENDING_TTL_MS: 60_000,
@@ -83,6 +99,8 @@ export default {
   CONTROL_PORT,
   MOEKOE_DIR,
   MOEKOE_DIST_DIR,
+  RUN_DIR,
+  TRUST_PROXY,
   MOEKOE_API_URL,
   WEB_ORIGINS,
   WS_PATH,

@@ -115,7 +115,8 @@ for (const file of mainBundles) {
 const moekoeDir = process.env.MOEKOE_DIR
   ? path.resolve(process.env.MOEKOE_DIR)
   : null;
-if (moekoeDir) {
+const containerBuild = /^(?:1|true)$/i.test(String(process.env.CONTAINER_BUILD || ''));
+if (moekoeDir && !containerBuild) {
   const git = spawnSync('git', ['status', '--short'], { cwd: moekoeDir, encoding: 'utf8' });
   const dirty = (git.stdout || '').trim();
   check('MoeKoeMusic working tree clean', dirty.length === 0, dirty || 'clean');

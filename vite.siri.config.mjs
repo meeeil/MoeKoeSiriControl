@@ -20,6 +20,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
+import { readEnvOrFile } from './server/env-source.js';
 
 /**
  * Vite bundles this config into `node_modules/.vite-temp/...`, so
@@ -59,7 +60,7 @@ const controlPort = String(process.env.CONTROL_PORT || '8200');
 const wsPath = String(process.env.SIRI_WS_PATH || '/ws');
 const apiBase = String(process.env.SIRI_API_BASE || '/api');
 const version = String(process.env.SIRI_VERSION || '1.0.0');
-const wsToken = String(process.env.SIRI_WS_TOKEN || '');
+const wsToken = String(readEnvOrFile('SIRI_WS_TOKEN'));
 
 if (!wsToken || wsToken.length < 32) {
   throw new Error('SIRI_WS_TOKEN must be set and at least 32 bytes in .env');
