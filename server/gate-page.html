@@ -211,8 +211,8 @@
         });
         const data = await res.json();
         if (res.ok && data.ok) {
-          btn.textContent = '验证成功';
-          window.location.replace('/#/');
+          btn.textContent = '验证成功，正在进入...';
+          window.location.reload();
         } else {
           errorMsg.textContent = '访问密码错误，请重新输入';
           errorTip.classList.add('visible');
