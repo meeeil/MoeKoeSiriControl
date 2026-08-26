@@ -21,6 +21,35 @@ import { safeTokenEqual } from './protocol.js';
 export const PAIR_COOKIE = 'siri_pair';
 const PAIR_CONTEXT_PREFIX = 'siri-controller:v1:';
 
+export const GATE_COOKIE = 'moekoe_gate';
+const GATE_CONTEXT_PREFIX = 'moekoe-gate:v1:';
+
+export function deriveGateValue(secret, gatePassword) {
+  return crypto
+    .createHmac('sha256', String(secret))
+    .update(GATE_CONTEXT_PREFIX + String(gatePassword))
+    .digest('hex');
+}
+
+export function makeGateCookieValue(secret, gatePassword) {
+  return deriveGateValue(secret, gatePassword);
+}
+
+export function parseGateCookie(cookieHeader, secret, gatePassword) {
+  if (!gatePassword) return true;
+  if (typeof cookieHeader !== 'string' || !cookieHeader) return false;
+  let value = null;
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(GATE_COOKIE + '=')) {
+      value = trimmed.slice(GATE_COOKIE.length + 1);
+      break;
+    }
+  }
+  if (!value) return false;
+  return safeTokenEqual(value, deriveGateValue(secret, gatePassword));
+}
+
 export function derivePairValue(secret, deviceId) {
   return crypto
     .createHmac('sha256', String(secret))

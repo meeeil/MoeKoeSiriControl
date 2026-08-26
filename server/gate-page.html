@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>MoeKoe Music 访问认证</title>
+  <link rel="icon" href="/favicon.ico">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: #f6f8fb;
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(224, 236, 255, 0.6) 0, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(240, 244, 255, 0.8) 0, transparent 50%);
+      color: #1e293b;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: #ffffff;
+      width: 100%;
+      max-width: 380px;
+      padding: 40px 32px 36px;
+      border-radius: 24px;
+      box-shadow: 
+        0 10px 30px -5px rgba(0, 0, 0, 0.04),
+        0 20px 25px -5px rgba(59, 130, 246, 0.03),
+        0 0 0 1px rgba(0, 0, 0, 0.04);
+      text-align: center;
+      animation: fadeIn 0.4s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .icon-wrapper {
+      width: 60px;
+      height: 60px;
+      border-radius: 18px;
+      background: #eff6ff;
+      color: #3b82f6;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.12);
+    }
+    .icon-wrapper svg {
+      width: 30px;
+      height: 30px;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #0f172a;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+    p.subtitle {
+      font-size: 13.5px;
+      color: #64748b;
+      line-height: 1.5;
+      margin-bottom: 28px;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      color: #2563eb;
+      background: #eff6ff;
+      padding: 3px 8px;
+      border-radius: 6px;
+      margin-top: 4px;
+    }
+    .input-group {
+      position: relative;
+      margin-bottom: 16px;
+      text-align: left;
+    }
+    input[type="password"] {
+      width: 100%;
+      height: 48px;
+      padding: 0 16px;
+      font-size: 15px;
+      color: #0f172a;
+      background: #f8fafc;
+      border: 1.5px solid #e2e8f0;
+      border-radius: 12px;
+      outline: none;
+      transition: all 0.2s ease;
+      font-family: inherit;
+    }
+    input[type="password"]:focus {
+      background: #ffffff;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
+    }
+    input[type="password"]::placeholder {
+      color: #94a3b8;
+    }
+    button.btn-submit {
+      width: 100%;
+      height: 48px;
+      background: #2563eb;
+      color: #ffffff;
+      border: none;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25);
+    }
+    button.btn-submit:hover {
+      background: #1d4ed8;
+      box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
+      transform: translateY(-1px);
+    }
+    button.btn-submit:active {
+      transform: translateY(0);
+    }
+    button.btn-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .error-tip {
+      font-size: 13px;
+      color: #ef4444;
+      margin-top: 12px;
+      min-height: 20px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+    .error-tip.visible {
+      display: flex;
+      animation: shake 0.3s ease-in-out;
+    }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-4px); }
+      40%, 80% { transform: translateX(4px); }
+    }
+    .footer {
+      margin-top: 24px;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon-wrapper">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+      </svg>
+    </div>
+    <h1>MoeKoe 音乐</h1>
+    <p class="subtitle">私有音乐播放器<br><span class="badge">验证一次 · 365天免密</span></p>
+
+    <form id="gateForm" onsubmit="handleLogin(event)">
+      <div class="input-group">
+        <input type="password" id="passwordInput" placeholder="请输入访问密码" autocomplete="current-password" autofocus required>
+      </div>
+      <button type="submit" class="btn-submit" id="submitBtn">进入播放器</button>
+      <div class="error-tip" id="errorTip">
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+        </svg>
+        <span id="errorMsg">密码错误，请重新输入</span>
+      </div>
+    </form>
+
+    <div class="footer">
+      Siri 语音控制与私有账号保护中
+    </div>
+  </div>
+
+  <script>
+    async function handleLogin(e) {
+      if (e) e.preventDefault();
+      const input = document.getElementById('passwordInput');
+      const btn = document.getElementById('submitBtn');
+      const errorTip = document.getElementById('errorTip');
+      const errorMsg = document.getElementById('errorMsg');
+      const pwd = input.value.trim();
+      if (!pwd) return;
+
+      btn.disabled = true;
+      btn.textContent = '验证中...';
+      errorTip.classList.remove('visible');
+
+      try {
+        const res = await fetch('/siri/gate-auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pwd })
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          btn.textContent = '验证成功';
+          window.location.replace('/#/');
+        } else {
+          errorMsg.textContent = '访问密码错误，请重新输入';
+          errorTip.classList.add('visible');
+          input.select();
+          input.focus();
+          btn.disabled = false;
+          btn.textContent = '进入播放器';
+        }
+      } catch (err) {
+        errorMsg.textContent = '网络请求失败，请稍后重试';
+        errorTip.classList.add('visible');
+        btn.disabled = false;
+        btn.textContent = '进入播放器';
+      }
+    }
+  </script>
+</body>
+</html>

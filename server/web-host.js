@@ -8,7 +8,10 @@ import {
   makePairCookieValue,
   parsePairCookie,
   createPairingLimiter,
-  PAIR_COOKIE
+  PAIR_COOKIE,
+  GATE_COOKIE,
+  makeGateCookieValue,
+  parseGateCookie
 } from './pairing.js';
 
 const HASHED_ASSET_RE = /[-.][A-Za-z0-9_-]{8,}\.(?:js|css|png|jpe?g|gif|svg|webp|woff2?|ico)$/i;
@@ -31,6 +34,61 @@ export function createWebHost({
       console.log(`[web-host] ${req.method} ${req.path} ${res.statusCode} ${ms}ms`);
     });
     next();
+  });
+
+  // 1. Gate Login Endpoint (JSON POST)
+  app.post('/siri/gate-auth', express.json(), (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const pwd = req.body && typeof req.body.password === 'string' ? req.body.password : '';
+    if (!config.WEB_GATE_PASSWORD || safeTokenEqual(pwd, config.WEB_GATE_PASSWORD)) {
+      const cookieVal = makeGateCookieValue(config.SIRI_HTTP_TOKEN, config.WEB_GATE_PASSWORD);
+      const secure = req.secure;
+      res.setHeader(
+        'Set-Cookie',
+        `${GATE_COOKIE}=${cookieVal}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`
+      );
+      return res.json({ ok: true });
+    }
+    return res.status(401).json({ ok: false, error: 'INVALID_PASSWORD' });
+  });
+
+  // 2. Query param key instant unlock (?key=... / ?auth=... / ?pin=...)
+  app.use((req, res, next) => {
+    if (config.WEB_GATE_PASSWORD && req.query) {
+      const keyCandidate = req.query.key || req.query.auth || req.query.pin;
+      if (typeof keyCandidate === 'string' && safeTokenEqual(keyCandidate, config.WEB_GATE_PASSWORD)) {
+        const cookieVal = makeGateCookieValue(config.SIRI_HTTP_TOKEN, config.WEB_GATE_PASSWORD);
+        const secure = req.secure;
+        res.setHeader(
+          'Set-Cookie',
+          `${GATE_COOKIE}=${cookieVal}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`
+        );
+        return res.redirect(req.path || '/');
+      }
+    }
+    next();
+  });
+
+  // 3. Gate Protection Middleware
+  app.use((req, res, next) => {
+    if (!config.WEB_GATE_PASSWORD) return next();
+    if (
+      req.path.startsWith('/api/siri') ||
+      req.path === '/siri/gate-auth' ||
+      req.path === '/health' ||
+      req.path === '/__edge_health'
+    ) {
+      return next();
+    }
+    const authed = parseGateCookie(req.headers.cookie, config.SIRI_HTTP_TOKEN, config.WEB_GATE_PASSWORD);
+    if (authed) return next();
+
+    // Unauthenticated: serve beautiful gate page for browser navigation, 401 JSON for subrequests
+    if (req.method === 'GET' && (req.path === '/' || req.path === '/index.html' || (req.headers.accept && req.headers.accept.includes('text/html')))) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.sendFile(path.join(config.projectRoot, 'server', 'gate-page.html'));
+    }
+    return res.status(401).json({ ok: false, error: 'GATE_LOCKED' });
   });
 
   app.use(

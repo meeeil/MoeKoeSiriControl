@@ -79,6 +79,13 @@ if (SIRI_HTTP_TOKEN === SIRI_WS_TOKEN) fail('SIRI_HTTP_TOKEN and SIRI_WS_TOKEN m
 const KUGOU_USERNAME = String(readEnvOrFile('KUGOU_USERNAME'));
 const KUGOU_PASSWORD = String(readEnvOrFile('KUGOU_PASSWORD'));
 
+const WEB_GATE_PASSWORD = String(
+  readEnvOrFile('WEB_GATE_PASSWORD') ||
+  process.env.WEB_GATE_PASSWORD ||
+  process.env.WEB_PASSWORD ||
+  ''
+).trim();
+
 const LIMITS = {
   PENDING_TTL_MS: 60_000,
   HTTP_ACK_WAIT_MS: 15_000,
@@ -109,6 +116,7 @@ export default {
   SIRI_WS_TOKEN,
   KUGOU_USERNAME,
   KUGOU_PASSWORD,
+  WEB_GATE_PASSWORD,
   LIMITS,
   PROTOCOL_VERSION
 };
