@@ -221,6 +221,17 @@ test('disallowed origin -> close immediately', async () => {
   assert.equal(code, 1008);
 });
 
+test('same-host external origin is accepted without a configured public domain', async () => {
+  const sock = await connect(wsUrl, {
+    origin: 'https://music.example.test',
+    headers: { Host: 'music.example.test' }
+  });
+  sendAuth(sock);
+  const ok = await nextMessage(sock);
+  assert.equal(ok.type, 'auth.ok');
+  sock.close();
+});
+
 test('missed pong -> server terminates connection', async () => {
   const sock = await connect(wsUrl);
   sendAuth(sock);

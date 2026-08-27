@@ -179,12 +179,16 @@ export function createControlServer(overrides = {}) {
     }
   }
 
-  function isOriginAllowed(origin) {
+  function isOriginAllowed(origin, requestHost) {
     if (!origin) return true;
     if (allowedOrigins.has(origin)) return true;
     if (allowedOrigins.has('*')) return true;
     try {
       const parsed = new URL(origin);
+      const normalizedRequestHost = String(requestHost || '').trim().toLowerCase();
+      if (normalizedRequestHost && parsed.host.toLowerCase() === normalizedRequestHost) {
+        return true;
+      }
       const host = parsed.hostname;
       if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
       if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
@@ -201,7 +205,7 @@ export function createControlServer(overrides = {}) {
     const remote = req.socket.remoteAddress || 'unknown';
     const origin = req.headers.origin;
 
-    if (origin && !isOriginAllowed(origin)) {
+    if (origin && !isOriginAllowed(origin, req.headers.host)) {
       console.log(`[control] reject ws origin ${origin} (${remote})`);
       socket.close(1008, 'origin not allowed');
       return;
