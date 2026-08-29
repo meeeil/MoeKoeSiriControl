@@ -189,13 +189,63 @@ x-siri-token: <SIRI_HTTP_TOKEN>
 GET /health
 ```
 
-## 安全说明
+## 安全与访问控制
 
 - `.env`、运行日志、控制器信息和本地备份均已加入 `.gitignore`。
 - HTTP Token 与 WebSocket Token 权限不同，并且必须使用不同的随机值。
 - 配对 Cookie 使用 HMAC 派生，账号密码不会发给浏览器，也不会写入日志。
 - 登录接口包含超时、单飞、冷却和请求预算限制，避免异常情况下反复请求上游。
-- 本项目没有为公网部署设计 TLS、反向代理鉴权或多用户权限模型。
+- **Cookie 门禁防护（可选）**：通过在 `.env` 中设置 `GATE_SECRET=<你的暗号>`，未授权的访问将直接返回 `404 Not Found`。仅在访问 `/enter-<GATE_SECRET>` 后才会为浏览器颁发永久通行证 Cookie。
+
+## 单域名反向代理部署 (443 HTTPS)
+
+### Caddy 配置示例 (`Caddyfile`)
+
+```caddyfile
+music.yourdomain.com {
+    # 1. 代理 WebSocket 控制通道
+    handle /ws* {
+        reverse_proxy 127.0.0.1:8200
+    }
+
+    # 2. 代理 Siri 控制 API
+    handle /api/siri/* {
+        reverse_proxy 127.0.0.1:8200
+    }
+
+    # 3. 代理 WebUI 与音乐 API
+    handle {
+        reverse_proxy 127.0.0.1:8080
+    }
+}
+```
+
+### Nginx 配置示例
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name music.yourdomain.com;
+
+    location /ws {
+        proxy_pass http://127.0.0.1:8200/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $host;
+    }
+
+    location /api/siri/ {
+        proxy_pass http://127.0.0.1:8200/api/siri/;
+        proxy_set_header Host $host;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+    }
+}
+```
 
 ## 项目结构
 
@@ -211,7 +261,7 @@ MoeKoeSiriControl/
 └── vite.siri.config.mjs
 ```
 
-当前测试覆盖搜索结果解析、播放器控制、WebSocket 协议、配对、HTTP API、离线命令、会话恢复和端到端播放链路。公开前在 Node.js 24 环境运行结果为 **202 项通过**。
+当前测试覆盖搜索结果解析、播放器控制、WebSocket 协议、配对、HTTP API、离线命令、会话恢复、Cookie 门禁和端到端播放链路。在 Node.js 环境运行结果为 **203 项通过**。
 
 ## MoeKoeMusic 上游贡献
 

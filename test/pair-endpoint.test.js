@@ -87,3 +87,21 @@ test('POST /siri/pair is rate limited to 5 per IP per minute', async () => {
   assert.equal(body.error, 'RATE_LIMITED');
   await new Promise((resolve) => limiterServer.close(resolve));
 });
+
+test('GATE_SECRET cookie gate: unauthenticated -> 404, enter URL sets cookie, cookie -> 200', async () => {
+  if (!config.GATE_SECRET) return;
+
+  const unauth = await fetch(`${baseUrl}/`);
+  assert.equal(unauth.status, 404);
+
+  const enterRes = await fetch(`${baseUrl}/enter-${config.GATE_SECRET}`, { redirect: 'manual' });
+  assert.equal(enterRes.status, 302);
+  const setCookie = enterRes.headers.get('set-cookie') || '';
+  assert.match(setCookie, /music_auth=verified_user/);
+  assert.match(setCookie, /Max-Age=315360000/);
+
+  const authRes = await fetch(`${baseUrl}/`, {
+    headers: { 'Cookie': 'music_auth=verified_user' }
+  });
+  assert.equal(authRes.status, 200);
+});

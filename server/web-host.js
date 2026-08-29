@@ -25,6 +25,31 @@ export function createWebHost({ controllerStore } = {}) {
     next();
   });
 
+  if (config.GATE_SECRET) {
+    const enterPath = `/enter-${config.GATE_SECRET}`;
+
+    // 1. 访问秘密入口 -> 下发永久通行证 Cookie 并跳转首页
+    app.get(enterPath, (_req, res) => {
+      res.setHeader(
+        'Set-Cookie',
+        `music_auth=verified_user; Path=/; Max-Age=315360000; SameSite=Lax`
+      );
+      res.redirect(302, '/');
+    });
+
+    // 2. 门禁中间件：拦截所有未带 Cookie 的陌生人访问
+    app.use((req, res, next) => {
+      if (req.path === enterPath) return next();
+      if (req.path.startsWith('/siri/pair')) return next();
+      if (req.headers['x-siri-token']) return next();
+      const cookies = req.headers.cookie || '';
+      if (cookies.includes('music_auth=verified_user')) {
+        return next();
+      }
+      return res.status(404).send('404 Not Found');
+    });
+  }
+
   app.use(
     '/api',
     createProxyMiddleware({
