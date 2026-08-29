@@ -58,7 +58,8 @@ function Start-DetachedProcess([string]$name, [string]$workDir, [string]$command
 $apiPort   = [int](Get-EnvValue 'MOEKOE_API_PORT' '6521')
 $webPort   = [int](Get-EnvValue 'WEB_PORT' '8080')
 $controlPort = [int](Get-EnvValue 'CONTROL_PORT' '8200')
-$moekoeDir = (Get-EnvValue 'MOEKOE_DIR' 'C:\Users\dyk\Desktop\code\MoeKoeMusic')
+$defaultMoekoeDir = [System.IO.Path]::GetFullPath((Join-Path $root '..\MoeKoeMusic'))
+$moekoeDir = (Get-EnvValue 'MOEKOE_DIR' $defaultMoekoeDir)
 $moekoeDist = (Get-EnvValue 'MOEKOE_DIST_DIR' (Join-Path $moekoeDir 'dist'))
 
 if (-not (Test-Path $moekoeDist)) {
