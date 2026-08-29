@@ -110,7 +110,7 @@ export function createWebHost({ controllerStore } = {}) {
   app.use(staticMiddleware);
 
   app.use((req, res, next) => {
-    if (req.method !== 'GET') return next();
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
     if (req.path.startsWith('/api')) return next();
     res.setHeader('Cache-Control', 'no-store');
     res.sendFile(path.join(config.MOEKOE_DIST_DIR, 'index.html'));
